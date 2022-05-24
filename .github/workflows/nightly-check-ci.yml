@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        gradle-task: ['check', 'testSerial', 'testParallel', 'testOutOfBand']
+        gradle-task: ['engine-table:testOutOfBand --tests io.deephaven.engine.table.impl.QueryTableAggregationTest.testMedianByIncremental']
         test-jvm-version: ['11', '17', '18']
     if: ${{ github.repository_owner == 'deephaven' || github.event_name != 'schedule' }}
     runs-on: ubuntu-20.04
@@ -53,18 +53,91 @@ jobs:
           echo "org.gradle.java.installations.paths=${{ steps.setup-java-11.outputs.path }},${{ steps.setup-java-17.outputs.path }},${{ steps.setup-java-18.outputs.path }}," >> gradle.properties
           cat gradle.properties
 
-      - name: Run gradle ${{ matrix.gradle-task }} on java ${{ matrix.test-jvm-version }}
+      - name: Run gradle ${{ matrix.gradle-task }} on java ${{ matrix.test-jvm-version }} 1
         uses: burrunan/gradle-cache-action@v1
+        if: always()
         with:
           job-id: gradle-run
-          arguments: --scan --continue --rerun-tasks ${{ matrix.gradle-task }} -PtestRuntimeVersion=${{ matrix.test-jvm-version }}
+          arguments: --continue --rerun-tasks ${{ matrix.gradle-task }} -PtestRuntimeVersion=${{ matrix.test-jvm-version }}
+          gradle-version: wrapper
+
+      - name: Run gradle ${{ matrix.gradle-task }} on java ${{ matrix.test-jvm-version }} 2
+        uses: burrunan/gradle-cache-action@v1
+        if: always()
+        with:
+          job-id: gradle-run
+          arguments: --continue -PforceTest=true ${{ matrix.gradle-task }} -PtestRuntimeVersion=${{ matrix.test-jvm-version }}
+          gradle-version: wrapper
+
+      - name: Run gradle ${{ matrix.gradle-task }} on java ${{ matrix.test-jvm-version }} 3
+        uses: burrunan/gradle-cache-action@v1
+        if: always()
+        with:
+          job-id: gradle-run
+          arguments: --continue -PforceTest=true ${{ matrix.gradle-task }} -PtestRuntimeVersion=${{ matrix.test-jvm-version }}
+          gradle-version: wrapper
+
+      - name: Run gradle ${{ matrix.gradle-task }} on java ${{ matrix.test-jvm-version }} 4
+        uses: burrunan/gradle-cache-action@v1
+        if: always()
+        with:
+          job-id: gradle-run
+          arguments: --continue -PforceTest=true ${{ matrix.gradle-task }} -PtestRuntimeVersion=${{ matrix.test-jvm-version }}
+          gradle-version: wrapper
+
+      - name: Run gradle ${{ matrix.gradle-task }} on java ${{ matrix.test-jvm-version }} 5
+        uses: burrunan/gradle-cache-action@v1
+        if: always()
+        with:
+          job-id: gradle-run
+          arguments: --continue -PforceTest=true ${{ matrix.gradle-task }} -PtestRuntimeVersion=${{ matrix.test-jvm-version }}
+          gradle-version: wrapper
+
+      - name: Run gradle ${{ matrix.gradle-task }} on java ${{ matrix.test-jvm-version }} 6
+        uses: burrunan/gradle-cache-action@v1
+        if: always()
+        with:
+          job-id: gradle-run
+          arguments: --continue -PforceTest=true ${{ matrix.gradle-task }} -PtestRuntimeVersion=${{ matrix.test-jvm-version }}
+          gradle-version: wrapper
+
+      - name: Run gradle ${{ matrix.gradle-task }} on java ${{ matrix.test-jvm-version }} 7
+        uses: burrunan/gradle-cache-action@v1
+        if: always()
+        with:
+          job-id: gradle-run
+          arguments: --continue -PforceTest=true ${{ matrix.gradle-task }} -PtestRuntimeVersion=${{ matrix.test-jvm-version }}
+          gradle-version: wrapper
+
+      - name: Run gradle ${{ matrix.gradle-task }} on java ${{ matrix.test-jvm-version }} 8
+        uses: burrunan/gradle-cache-action@v1
+        if: always()
+        with:
+          job-id: gradle-run
+          arguments: --continue -PforceTest=true ${{ matrix.gradle-task }} -PtestRuntimeVersion=${{ matrix.test-jvm-version }}
+          gradle-version: wrapper
+
+      - name: Run gradle ${{ matrix.gradle-task }} on java ${{ matrix.test-jvm-version }} 9
+        uses: burrunan/gradle-cache-action@v1
+        if: always()
+        with:
+          job-id: gradle-run
+          arguments: --continue -PforceTest=true ${{ matrix.gradle-task }} -PtestRuntimeVersion=${{ matrix.test-jvm-version }}
+          gradle-version: wrapper
+
+      - name: Run gradle ${{ matrix.gradle-task }} on java ${{ matrix.test-jvm-version }} 10
+        uses: burrunan/gradle-cache-action@v1
+        if: always()
+        with:
+          job-id: gradle-run
+          arguments: --continue -PforceTest=true ${{ matrix.gradle-task }} -PtestRuntimeVersion=${{ matrix.test-jvm-version }}
           gradle-version: wrapper
 
       - name: Upload Test Results
         uses: actions/upload-artifact@v3
         if: always()
         with:
-          name: nightly-${{ matrix.gradle-task }}-java${{ matrix.test-jvm-version }}-ci-results
+          name: nightly-java${{ matrix.test-jvm-version }}-ci-results
           path: |
             **/build/test-results/*/TEST-*.xml
             **/build/reports/tests/**
@@ -73,7 +146,7 @@ jobs:
         uses: actions/upload-artifact@v3
         if: failure()
         with:
-          name: nightly-${{ matrix.gradle-task }}-java${{ matrix.test-jvm-version }}-ci-jvm-err
+          name: nightly-java${{ matrix.test-jvm-version }}-ci-jvm-err
           path: |
             **/*_pid*.log
             **/core.*
@@ -89,15 +162,3 @@ jobs:
           check_name: check report ${{ matrix.gradle-task }} java${{ matrix.test-jvm-version }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           report_paths: '**/build/test-results/*/TEST-*.xml'
-
-      - name: Slack Nightly Failure
-        uses: slackapi/slack-github-action@v1.18.0
-        id: slack-nightly-failure
-        if: ${{ failure() && github.repository_owner == 'deephaven' }}
-        with:
-          payload: |
-            {
-              "slack_message": "Nightly build failure in ${{ matrix.gradle-task }} on Java ${{ matrix.test-jvm-version }} @ ${{ github.head_ref }} ${{ github.sha }}"
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_NIGHTLY_FAILURE }}
