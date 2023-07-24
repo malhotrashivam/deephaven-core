@@ -11,7 +11,15 @@ from deephaven import DHError
 from deephaven.update_graph import exclusive_lock
 from deephaven.table import Table, PartitionedTableProxy
 
-from test_helper import py_dh_session
+# from test_helper import py_dh_session
+
+import jpy
+py_scope_jpy = jpy.get_type("io.deephaven.engine.util.PythonScopeJpyImpl").ofMainGlobals()
+global py_dh_session
+_JPeriodicUpdateGraph = jpy.get_type("io.deephaven.engine.updategraph.impl.PeriodicUpdateGraph")
+_j_test_update_graph = _JPeriodicUpdateGraph.newBuilder("PYTHON_TEST").existingOrBuild()
+_JPythonScriptSession = jpy.get_type("io.deephaven.integrations.python.PythonDeephavenSession")
+py_dh_session = _JPythonScriptSession(_j_test_update_graph, py_scope_jpy)
 
 _JTableTools = jpy.get_type("io.deephaven.engine.util.TableTools")
 

@@ -1,7 +1,7 @@
 #
 # Copyright (c) 2016-2022 Deephaven Data Labs and Patent Pending
 #
-
+from tests.testbase import BaseTestCase
 import os
 import shutil
 import unittest
@@ -16,7 +16,6 @@ from deephaven.parquet import write, batch_write, read, delete, ColumnInstructio
 from deephaven.table import Table
 from deephaven.time import epoch_nanos_to_instant
 
-from tests.testbase import BaseTestCase
 
 
 class ParquetTestCase(BaseTestCase):
