@@ -802,46 +802,28 @@ public class ParquetTableReadWriteTest {
         final Table table1 = TableTools.emptyTable(5).update("A=(int)i");
         final File destFile = new File(rootFile, "table1.parquet");
         ParquetTools.writeTable(table1, destFile);
-        Table fromDisk = ParquetTools.readTable(destFile);
+        Table fromDisk1 = ParquetTools.readTable(destFile);
+        Table fromDisk2 = ParquetTools.readTable(destFile);
 
         // Overwrite the same file. This should invalidate the old handles
         final Table table2 = TableTools.emptyTable(5).update("B=(int)i*5");
         ParquetTools.writeTable(table2, destFile);
+
+        // The following will not fail because we had already opened a file handle to the old file. Therefore, even if
+        // the file got overwritten, the file handle will keep the old alive. This behavior is specific to Unix
+        // filesystem.
+        TstUtils.assertTableEquals(fromDisk1, table1);
 
         // Close all old file handles so that we read the file fresh instead of using any old handles
         TrackedFileHandleFactory.getInstance().closeAll();
 
         // This will attempt to read the file using old handle and should fail
         try {
-            TstUtils.assertTableEquals(fromDisk, table1);
+            TstUtils.assertTableEquals(fromDisk2, table1);
             TestCase.fail();
         } catch (RuntimeException expected) {
             assertTrue(expected.getCause() instanceof InvalidFileHandleException);
         }
-    }
-
-    @Test
-    public void multiReadTest() {
-        // There should be just one file in the directory on a successful write and no temporary files
-        final Table table1 = TableTools.emptyTable(5).update("A=(int)i");
-        final File destFile = new File(rootFile, "table1.parquet");
-        ParquetTools.writeTable(table1, destFile);
-        Table fromDisk = ParquetTools.readTable(destFile);
-        TstUtils.assertTableEquals(fromDisk, table1);
-        fromDisk = ParquetTools.readTable(destFile);
-        TstUtils.assertTableEquals(fromDisk, table1);
-        fromDisk = ParquetTools.readTable(destFile);
-        TstUtils.assertTableEquals(fromDisk, table1);
-
-        // final Table table2 = TableTools.emptyTable(5).update("B=(int)i*5");
-        // ParquetTools.writeTable(table2, destFile);
-        // fromDisk = ParquetTools.readTable(destFile);
-        // TstUtils.assertTableEquals(fromDisk, table2);
-
-        // final Table table2 = TableTools.emptyTable(5).update("C=(int)i*5");
-        // ParquetTools.writeTable(table3, destFile);
-        // fromDisk = ParquetTools.readTable(destFile);
-        // TstUtils.assertTableEquals(fromDisk, table2);
     }
 
     // TODO Add a test for testing invalidating grouping files as well
