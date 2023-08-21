@@ -9,6 +9,7 @@ import io.deephaven.base.verify.Require;
 import io.deephaven.engine.util.file.FileHandleAccessor;
 import io.deephaven.hash.KeyedObjectHashMap;
 import io.deephaven.hash.KeyedObjectKey;
+import io.deephaven.util.annotations.VisibleForTesting;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -31,8 +32,8 @@ public class CachedChannelProvider implements SeekableChannelsProvider {
     private long pooledCount;
 
     /**
-     * An invalid {@link CachedChannelProvider} will invalidate all the channels it has produced and will not create any
-     * more channels. Used to prevent creating channels to files which have been overwritten.
+     * Invalidating a {@link CachedChannelProvider} will invalidate all the channels it has produced and force it to
+     * create invalid channels in the future. This prevents creating channels to files which have been overwritten.
      */
     private boolean invalid;
 
@@ -54,8 +55,8 @@ public class CachedChannelProvider implements SeekableChannelsProvider {
             new RAPriQueue<>(8, PerPathPool.RAPQ_ADAPTER, PerPathPool.class);
 
     /**
-     * Following stores all the channels (and not just the pooled ones) created by this provider for any path and is
-     * useful for invalidating all file handles associated with this provider.
+     * Stores all channels (not just the pooled ones) created by this provider for all paths. Used for invalidating file
+     * handles associated with this provider.
      */
     private final Collection<WeakReference<SeekableByteChannel>> channelList = new ArrayList<>();
 
@@ -98,8 +99,9 @@ public class CachedChannelProvider implements SeekableChannelsProvider {
 
     private void channelCreatorHelper(@NotNull final Path path, @NotNull final SeekableByteChannel newChannel)
             throws IOException {
-        // If channel creator already marked invalid, mark the new channels invalid.
-        // This is needed because we cannot return a null channel. So we return invalidated channels.
+        // If channel creator is already marked invalid, mark the new channels invalid.
+        // Required because CachedChannelProvider cannot return a null channel, so it returns invalid channels.
+        // TODO Should we just throw an exception here?
         if (invalid) {
             invalidateChannel(newChannel);
             return;
@@ -188,7 +190,7 @@ public class CachedChannelProvider implements SeekableChannelsProvider {
     /**
      * {@link SeekableByteChannel Channel} wrapper for pooled usage.
      */
-    private class CachedChannel implements SeekableByteChannel {
+    class CachedChannel implements SeekableByteChannel {
 
         private final SeekableByteChannel wrappedChannel;
         private final ChannelType channelType;
@@ -261,6 +263,14 @@ public class CachedChannelProvider implements SeekableChannelsProvider {
 
         private void dispose() throws IOException {
             wrappedChannel.close();
+        }
+
+        @VisibleForTesting
+        boolean invalid() {
+            if (wrappedChannel instanceof FileHandleAccessor) {
+                return ((FileHandleAccessor) wrappedChannel).invalid();
+            }
+            return false;
         }
     }
 
