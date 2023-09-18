@@ -29,9 +29,10 @@ public abstract class ParquetInstructions implements ColumnToCodecMappings {
     /**
      * Set the default for {@link #getCompressionCodecName()}.
      *
+     * @deprecated Do not use this method directly, instead use {@link Builder#setCompressionCodecName(String)}.
      * @param name The new default
-     * @see Builder#setCompressionCodecName(String)
      */
+    @Deprecated
     public static void setDefaultCompressionCodecName(final String name) {
         defaultCompressionCodecName = name;
     }
