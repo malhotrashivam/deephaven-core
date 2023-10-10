@@ -9,6 +9,7 @@ import io.deephaven.base.FileUtils;
 import io.deephaven.configuration.Configuration;
 import io.deephaven.datastructures.util.CollectionUtil;
 import io.deephaven.engine.context.ExecutionContext;
+import io.deephaven.engine.context.QueryScope;
 import io.deephaven.engine.primitive.function.ByteConsumer;
 import io.deephaven.engine.primitive.function.CharConsumer;
 import io.deephaven.engine.primitive.function.FloatConsumer;
@@ -612,6 +613,106 @@ public class ParquetTableReadWriteTest {
         assertTrue(parentDir.list().length == 0);
     }
 
+    @Test
+    public void generateByteArrayFile() {
+        final int ARRAY_SIZE = 512;
+        final int NUM_ROWS = 100_000_000;
+
+        final byte[] b = new byte[ARRAY_SIZE];
+        for (int ii = 0; ii < b.length; ++ii) {
+            b[ii] = (byte) ii;
+        }
+        QueryScope.addParam("b", b);
+        final Table table = TableTools.emptyTable(NUM_ROWS).view("B = b");
+        final File dest = new File(rootFile + File.separator + "byteArrays512HundredMillionRows.parquet");
+        ParquetTools.writeTable(table, dest, ParquetTools.UNCOMPRESSED);
+
+        ParquetMetadata metadata = new ParquetTableLocationKey(dest, 0, null).getMetadata();
+        ColumnChunkMetaData columnMetadataDH = metadata.getBlocks().get(0).getColumns().get(0);
+        int numPages = columnMetadataDH.getEncodingStats().getNumDataPagesEncodedAs(Encoding.PLAIN);
+        System.out.println("Number of pages: " + numPages);
+    }
+
+    @Test
+    public void benchmarkReadingAllRowsParquet() {
+        final long NUM_ROWS = 100_000_000;
+        final long NUM_RUNS = 5;
+        final int MIN_PAGE_SIZE = 1 << 13; // 8 KB = 1 << 13
+        final int MAX_PAGE_SIZE = 1 << 20; // 1 MB = 1 << 20
+
+        final Table table = TableTools.emptyTable(NUM_ROWS).update("A=(long)ii", "B=(long)(ii*2)");
+        final File dest = new File(rootFile + File.separator + "benchmarkByteArrays.parquet");
+        for (int pageSize = MIN_PAGE_SIZE; pageSize <= MAX_PAGE_SIZE; pageSize <<= 1) {
+            final ParquetInstructions writeInstructions = new ParquetInstructions.Builder()
+                    .setTargetPageSize(pageSize)
+                    .setCompressionCodecName("UNCOMPRESSED")
+                    .build();
+            ParquetTools.writeTable(table, dest, writeInstructions);
+            ParquetMetadata metadata = new ParquetTableLocationKey(dest, 0, null).getMetadata();
+            ColumnChunkMetaData columnMetadataDH = metadata.getBlocks().get(0).getColumns().get(0);
+            int numPages = columnMetadataDH.getEncodingStats().getNumDataPagesEncodedAs(Encoding.PLAIN);
+            System.out.println("Number of pages written for page size " + pageSize + " is " + numPages);
+
+            long totalTime = 0;
+            for (long i = 0L; i < NUM_RUNS; i++) {
+                final Table fromDisk = ParquetTools.readTable(dest);
+
+                final long start1 = System.nanoTime();
+                final Table sumTable = fromDisk.sumBy().select();
+                final long end1 = System.nanoTime();
+
+                System.out.println("Execution time for page size " + pageSize + " and run " + (i + 1) + " is: "
+                        + (double) (end1 - start1) / 1000_000_000.0 + " sec");
+                totalTime += (end1 - start1);
+            }
+            System.out.println("Average execution time for sumBy for page size " + pageSize + " is "
+                    + (double) (totalTime) / ((double) NUM_RUNS * 1000_000_000.0) + " sec");
+        }
+    }
+
+    @Test
+    public void benchmarkReadingRowsSparselyParquet() {
+        final long NUM_ROWS = 100_000_000;
+        final long NUM_RUNS = 5;
+        final long STRIDE = 100_000;
+        final int MIN_PAGE_SIZE = 1 << 13; // 8 KB = 1 << 13
+        final int MAX_PAGE_SIZE = 1 << 20; // 1 MB = 1 << 20
+
+        final Table table = TableTools.emptyTable(NUM_ROWS).update("A=(long)ii", "B=(long)(ii*2)");
+        final File dest = new File(rootFile + File.separator + "benchmarkByteArrays.parquet");
+        for (int pageSize = MIN_PAGE_SIZE; pageSize <= MAX_PAGE_SIZE; pageSize <<= 1) {
+            final ParquetInstructions writeInstructions = new ParquetInstructions.Builder()
+                    .setTargetPageSize(pageSize)
+                    .setCompressionCodecName("UNCOMPRESSED")
+                    .build();
+            ParquetTools.writeTable(table, dest, writeInstructions);
+            ParquetMetadata metadata = new ParquetTableLocationKey(dest, 0, null).getMetadata();
+            ColumnChunkMetaData columnMetadataDH = metadata.getBlocks().get(0).getColumns().get(0);
+            int numPages = columnMetadataDH.getEncodingStats().getNumDataPagesEncodedAs(Encoding.PLAIN);
+            System.out.println("Number of pages written for page size " + pageSize + " is " + numPages);
+
+            long totalTime = 0;
+
+            final String filterStr = "A%" + STRIDE + " == 0";
+            for (long i = 0L; i < NUM_RUNS; i++) {
+                final Table sparseTable = ParquetTools.readTable(dest).where(filterStr);
+                if (i == 0L && pageSize == MIN_PAGE_SIZE) {
+                    System.out.println("Number of rows selected for stride " + STRIDE + " and page size " + pageSize +
+                            " is: " + sparseTable.size());
+                }
+
+                final long start1 = System.nanoTime();
+                final Table sumTable = sparseTable.sumBy().select();
+                final long end1 = System.nanoTime();
+
+                System.out.println("Execution time for page size " + pageSize + " and run " + (i + 1) + " is: "
+                        + (double) (end1 - start1) / 1000_000.0 + " msec");
+                totalTime += (end1 - start1);
+            }
+            System.out.println("Average execution time for sparse sumBy for page size " + pageSize + " is "
+                    + (double) (totalTime) / ((double) NUM_RUNS * 1000_000.0) + " msec");
+        }
+    }
 
     /**
      * These are tests for writing to a table with grouping columns to a parquet file and making sure there are no
