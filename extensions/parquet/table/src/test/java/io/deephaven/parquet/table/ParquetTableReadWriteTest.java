@@ -8,6 +8,7 @@ import io.deephaven.api.Selectable;
 import io.deephaven.base.FileUtils;
 import io.deephaven.datastructures.util.CollectionUtil;
 import io.deephaven.engine.context.ExecutionContext;
+import io.deephaven.engine.context.QueryScope;
 import io.deephaven.engine.primitive.function.ByteConsumer;
 import io.deephaven.engine.primitive.function.CharConsumer;
 import io.deephaven.engine.primitive.function.FloatConsumer;
@@ -606,6 +607,26 @@ public class ParquetTableReadWriteTest {
     TestParquetTableWriter singleWriter = (table, destFile) -> ParquetTools.writeTable(table, destFile);
     TestParquetTableWriter multiWriter = (table, destFile) -> ParquetTools.writeTables(new Table[] {table},
             table.getDefinition(), new File[] {destFile});
+
+    @Test
+    public void generateByteArrayFile() {
+        final int ARRAY_SIZE = 512;
+        final int NUM_ROWS = 100_000_000;
+
+        final byte[] b = new byte[ARRAY_SIZE];
+        for (int ii = 0; ii < b.length; ++ii) {
+            b[ii] = (byte) ii;
+        }
+        QueryScope.addParam("b", b);
+        final Table table = TableTools.emptyTable(NUM_ROWS).view("B = b");
+        final File dest = new File(rootFile + File.separator + "byteArrays512HundredMillionRows.parquet");
+        ParquetTools.writeTable(table, dest, ParquetTools.UNCOMPRESSED);
+
+        ParquetMetadata metadata = new ParquetTableLocationKey(dest, 0, null).getMetadata();
+        ColumnChunkMetaData columnMetadataDH = metadata.getBlocks().get(0).getColumns().get(0);
+        int numPages = columnMetadataDH.getEncodingStats().getNumDataPagesEncodedAs(Encoding.PLAIN);
+        System.out.println("Number of pages: " + numPages);
+    }
 
     /**
      * These are tests for writing a table to a parquet file and making sure there are no unnecessary files left in the
