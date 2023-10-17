@@ -42,7 +42,18 @@ public class ColumnWriterImpl implements ColumnWriter {
 
     private static final int MIN_SLAB_SIZE = 64;
     private final SeekableByteChannel writeChannel;
-    private final BufferedOutputStream bout;
+
+    private static class BufferedOutputStreamDerived extends BufferedOutputStream {
+        BufferedOutputStreamDerived(OutputStream out, int size) {
+            super(out, size);
+        }
+
+        final int count() {
+            return count;
+        }
+    }
+
+    private final BufferedOutputStreamDerived bout;
     private final ColumnDescriptor column;
     private final RowGroupWriterImpl owner;
     private final CompressorAdapter compressorAdapter;
@@ -76,7 +87,7 @@ public class ColumnWriterImpl implements ColumnWriter {
             final int targetPageSize,
             final ByteBufferAllocator allocator) {
         this.writeChannel = writeChannel;
-        bout = new BufferedOutputStream(Channels.newOutputStream(writeChannel), 1024);
+        bout = new BufferedOutputStreamDerived(Channels.newOutputStream(writeChannel), targetPageSize + 512);
         // TODO Close this
         this.column = column;
         this.compressorAdapter = compressorAdapter;
@@ -350,14 +361,15 @@ public class ColumnWriterImpl implements ColumnWriter {
         }
         // Buffer all writes while creating the header and flush them later
         writeDataPageV1Header((int) uncompressedSize, (int) compressedSize, valueCount, valuesEncoding, bout);
-        bout.flush();
-        long headerSize = writeChannel.position() - initialOffset;
+        long headerSize = bout.count();
         this.uncompressedLength += (uncompressedSize + headerSize);
         this.compressedLength += (compressedSize + headerSize);
         this.totalValueCount += valueCount;
         this.pageCount += 1;
 
-        writeChannel.write(compressedBytes.toByteBuffer());
+        compressedBytes.writeAllTo(bout);
+        bout.flush();
+        // writeChannel.write(compressedBytes.toByteBuffer());
         offsetIndexBuilder.add((int) (writeChannel.position() - initialOffset), valueCount);
         encodings.add(valuesEncoding);
         encodingStatsBuilder.addDataEncoding(valuesEncoding);
