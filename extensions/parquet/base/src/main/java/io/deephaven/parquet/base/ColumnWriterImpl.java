@@ -23,6 +23,7 @@ import org.apache.parquet.schema.LogicalTypeAnnotation;
 import org.apache.parquet.schema.PrimitiveType;
 import org.jetbrains.annotations.NotNull;
 
+import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -41,6 +42,7 @@ public class ColumnWriterImpl implements ColumnWriter {
 
     private static final int MIN_SLAB_SIZE = 64;
     private final SeekableByteChannel writeChannel;
+    private final BufferedOutputStream bout;
     private final ColumnDescriptor column;
     private final RowGroupWriterImpl owner;
     private final CompressorAdapter compressorAdapter;
@@ -74,6 +76,8 @@ public class ColumnWriterImpl implements ColumnWriter {
             final int targetPageSize,
             final ByteBufferAllocator allocator) {
         this.writeChannel = writeChannel;
+        bout = new BufferedOutputStream(Channels.newOutputStream(writeChannel), 1024);
+        // TODO Close this
         this.column = column;
         this.compressorAdapter = compressorAdapter;
         this.targetPageSize = targetPageSize;
@@ -153,6 +157,7 @@ public class ColumnWriterImpl implements ColumnWriter {
 
         int compressedPageSize = (int) compressedBytes.size();
 
+        // TODO Do the same improvement here
         metadataConverter.writeDictionaryPageHeader(
                 uncompressedSize,
                 compressedPageSize,
@@ -298,6 +303,7 @@ public class ColumnWriterImpl implements ColumnWriter {
         if (firstDataPageOffset == -1) {
             firstDataPageOffset = initialOffset;
         }
+        // TODO Do the same improvement here
         writeDataPageV2Header(
                 uncompressedSize, compressedSize,
                 valueCount, nullCount, rowCount,
@@ -342,12 +348,9 @@ public class ColumnWriterImpl implements ColumnWriter {
                     "Cannot write compressed page larger than Integer.MAX_VALUE bytes: "
                             + compressedSize);
         }
-        writeDataPageV1Header(
-                (int) uncompressedSize,
-                (int) compressedSize,
-                valueCount,
-                valuesEncoding,
-                Channels.newOutputStream(writeChannel));
+        // Buffer all writes while creating the header and flush them later
+        writeDataPageV1Header((int) uncompressedSize, (int) compressedSize, valueCount, valuesEncoding, bout);
+        bout.flush();
         long headerSize = writeChannel.position() - initialOffset;
         this.uncompressedLength += (uncompressedSize + headerSize);
         this.compressedLength += (compressedSize + headerSize);
