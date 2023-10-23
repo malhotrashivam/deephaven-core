@@ -17,6 +17,7 @@ import io.deephaven.engine.table.impl.select.FormulaColumn;
 import io.deephaven.engine.table.impl.select.NullSelectColumn;
 import io.deephaven.engine.table.impl.select.SelectColumn;
 import io.deephaven.engine.table.impl.select.SourceColumn;
+import io.deephaven.parquet.base.BulkWriter;
 import io.deephaven.parquet.base.ColumnWriter;
 import io.deephaven.parquet.base.ParquetFileWriter;
 import io.deephaven.parquet.base.RowGroupWriter;
@@ -442,11 +443,14 @@ public class ParquetTableWriter {
                 tableRowSet, writeInstructions, computedCache, columnName, columnSource)) {
             final Statistics<?> statistics = columnWriter.getStats();
             boolean writeVectorPages = (transferObject instanceof ArrayAndVectorTransfer);
+            transferObject.setStats(statistics);
             do {
+                BulkWriter writer = columnWriter.getWriter();
+                transferObject.setWriter(writer);
                 int numValuesBuffered = transferObject.transferOnePageToBuffer();
                 if (writeVectorPages) {
                     columnWriter.addVectorPage(transferObject.getBuffer(), transferObject.getRepeatCount(),
-                            numValuesBuffered, statistics);
+                            numValuesBuffered, statistics, writer);
                 } else {
                     columnWriter.addPage(transferObject.getBuffer(), numValuesBuffered, statistics);
                 }

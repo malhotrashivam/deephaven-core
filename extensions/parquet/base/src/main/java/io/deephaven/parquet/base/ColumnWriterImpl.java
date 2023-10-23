@@ -233,6 +233,31 @@ public final class ColumnWriterImpl implements ColumnWriter {
         bulkWriter.reset();
     }
 
+    public final BulkWriter getWriter() {
+        initWriter();
+        return bulkWriter;
+    }
+
+    public final void addVectorPage(
+            @NotNull final Object pageData,
+            @NotNull final IntBuffer repeatCount,
+            final int nonNullValueCount,
+            @NotNull final Statistics<?> statistics,
+            @NotNull final BulkWriter bulkWriterArg) throws IOException {
+        if (dlEncoder == null) {
+            throw new IllegalStateException("Null values not supported");
+        }
+        if (rlEncoder == null) {
+            throw new IllegalStateException("Repeating values not supported");
+        }
+        // noinspection unchecked
+        int valueCount =
+                bulkWriterArg.writeBulkVector(pageData, repeatCount, rlEncoder, dlEncoder, nonNullValueCount,
+                        statistics);
+        writePage(bulkWriterArg.getByteBufferView(), valueCount);
+        bulkWriterArg.reset();
+    }
+
     private void writeDataPageV2Header(
             final int uncompressedSize,
             final int compressedSize,
