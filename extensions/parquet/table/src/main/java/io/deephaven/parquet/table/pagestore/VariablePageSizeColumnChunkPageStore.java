@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.lang.ref.WeakReference;
 import java.util.Arrays;
+import java.util.concurrent.Semaphore;
 
 class VariablePageSizeColumnChunkPageStore<ATTR extends Any> extends ColumnChunkPageStore<ATTR> {
 
@@ -29,6 +30,11 @@ class VariablePageSizeColumnChunkPageStore<ATTR extends Any> extends ColumnChunk
     private volatile int numPages = 0;
     private volatile long[] pageRowOffsets;
     private volatile ColumnPageReader[] columnPageReaders;
+
+    private final Semaphore[] semaphores;
+
+    private final Semaphore overallSemaphore = new Semaphore(1);
+
     private volatile WeakReference<PageCache.IntrusivePage<ATTR>>[] pages;
 
     VariablePageSizeColumnChunkPageStore(@NotNull final PageCache<ATTR> pageCache,
@@ -41,6 +47,10 @@ class VariablePageSizeColumnChunkPageStore<ATTR extends Any> extends ColumnChunk
         pageRowOffsets = new long[INIT_ARRAY_SIZE + 1];
         pageRowOffsets[0] = 0;
         columnPageReaders = new ColumnPageReader[INIT_ARRAY_SIZE];
+        semaphores = new Semaphore[500];
+        for (int i = 0; i < semaphores.length; i++) {
+            semaphores[i] = new Semaphore(1);
+        }
 
         // noinspection unchecked
         pages = (WeakReference<PageCache.IntrusivePage<ATTR>>[]) new WeakReference[INIT_ARRAY_SIZE];
@@ -49,7 +59,13 @@ class VariablePageSizeColumnChunkPageStore<ATTR extends Any> extends ColumnChunk
     private void extendOnePage(final int prevNumPages) {
         PageCache.IntrusivePage<ATTR> page = null;
 
-        synchronized (this) {
+        final int queueLengthOverall = overallSemaphore.getQueueLength();
+        if (queueLengthOverall > 0) {
+            System.out.println("1.Len=" + queueLengthOverall);
+        }
+        overallSemaphore.acquireUninterruptibly();
+        // synchronized (this)
+        {
             int localNumPages = numPages;
 
             // Make sure that no one has already extended to this page yet.
@@ -90,6 +106,7 @@ class VariablePageSizeColumnChunkPageStore<ATTR extends Any> extends ColumnChunk
                 numPages = localNumPages + 1;
             }
         }
+        overallSemaphore.release();
 
         if (page != null) {
             pageCache.touch(page);
@@ -112,7 +129,13 @@ class VariablePageSizeColumnChunkPageStore<ATTR extends Any> extends ColumnChunk
         PageCache.IntrusivePage<ATTR> page = pages[pageNum].get();
 
         if (page == null) {
-            synchronized (columnPageReaders[pageNum]) {
+            final int queueLength = semaphores[pageNum].getQueueLength();
+            if (queueLength > 0) {
+                System.out.println("2.Len=" + queueLength);
+            }
+            semaphores[pageNum].acquireUninterruptibly();
+            // synchronized (columnPageReaders[pageNum]) {
+            {
                 // Make sure no one filled it for us as we waited for the lock
                 page = pages[pageNum].get();
 
@@ -124,11 +147,20 @@ class VariablePageSizeColumnChunkPageStore<ATTR extends Any> extends ColumnChunk
                         throw new UncheckedIOException(except);
                     }
 
-                    synchronized (this) {
+
+                    final int queueLengthOverall = overallSemaphore.getQueueLength();
+                    if (queueLengthOverall > 0) {
+                        System.out.println("3.Len=" + queueLengthOverall);
+                    }
+                    overallSemaphore.acquireUninterruptibly();
+                    // synchronized (this)
+                    {
                         pages[pageNum] = new WeakReference<>(page);
                     }
+                    overallSemaphore.release();
                 }
             }
+            semaphores[pageNum].release();
         }
 
         pageCache.touch(page);
