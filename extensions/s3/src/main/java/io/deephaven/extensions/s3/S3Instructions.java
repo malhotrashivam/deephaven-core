@@ -6,8 +6,11 @@ package io.deephaven.extensions.s3;
 import io.deephaven.annotations.BuildableStyle;
 import io.deephaven.configuration.Configuration;
 import org.immutables.value.Value;
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 
+import java.net.URI;
 import java.time.Duration;
+import java.util.Optional;
 
 /**
  * This class provides instructions intended for reading and writing data to AWS S3 instances.
@@ -92,6 +95,13 @@ public abstract class S3Instructions {
         return DEFAULT_READ_TIMEOUT;
     }
 
+    // todo: this exposes aws as API dependency...
+    // don't commit as-is
+
+    public abstract Optional<AwsCredentialsProvider> credentialsProvider();
+
+    public abstract Optional<URI> endpoint();
+
 
     @Value.Check
     final void boundsCheckMaxConcurrentRequests() {
@@ -141,6 +151,10 @@ public abstract class S3Instructions {
         Builder connectionTimeout(Duration connectionTimeout);
 
         Builder readTimeout(Duration connectionTimeout);
+
+        Builder credentialsProvider(AwsCredentialsProvider credentialsProvider);
+
+        Builder endpoint(URI endpoint);
 
         S3Instructions build();
     }
