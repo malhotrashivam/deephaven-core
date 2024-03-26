@@ -1,6 +1,6 @@
-/**
- * Copyright (c) 2016-2022 Deephaven Data Labs and Patent Pending
- */
+//
+// Copyright (c) 2016-2024 Deephaven Data Labs and Patent Pending
+//
 package io.deephaven.parquet.base;
 
 import io.deephaven.UncheckedDeephavenException;
@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.function.Function;
 
+import static io.deephaven.base.FileUtils.convertToURI;
 import static io.deephaven.parquet.base.ParquetFileReader.FILE_URI_SCHEME;
 import static org.apache.parquet.format.Encoding.PLAIN_DICTIONARY;
 import static org.apache.parquet.format.Encoding.RLE_DICTIONARY;
@@ -126,7 +127,19 @@ final class ColumnChunkReaderImpl implements ColumnChunkReader {
     }
 
     private URI getURI() {
+<<<<<<< HEAD
         return columnChunkURI;
+=======
+        if (uri != null) {
+            return uri;
+        }
+        if (columnChunk.isSetFile_path() && FILE_URI_SCHEME.equals(rootURI.getScheme())) {
+            return uri = convertToURI(Path.of(rootURI).resolve(columnChunk.getFile_path()), false);
+        } else {
+            // TODO(deephaven-core#5066): Add support for reading metadata files from non-file URIs
+            return uri = rootURI;
+        }
+>>>>>>> main
     }
 
     @Override

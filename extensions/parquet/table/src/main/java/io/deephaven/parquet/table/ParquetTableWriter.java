@@ -1,18 +1,13 @@
-/**
- * Copyright (c) 2016-2022 Deephaven Data Labs and Patent Pending
- */
+//
+// Copyright (c) 2016-2024 Deephaven Data Labs and Patent Pending
+//
 package io.deephaven.parquet.table;
 
-import io.deephaven.UncheckedDeephavenException;
-import io.deephaven.api.ColumnName;
-import io.deephaven.api.RawString;
-import io.deephaven.api.Selectable;
-import io.deephaven.api.agg.Aggregation;
 import io.deephaven.engine.liveness.LivenessScopeStack;
 import io.deephaven.engine.rowset.RowSet;
 import io.deephaven.engine.rowset.TrackingRowSet;
 import io.deephaven.engine.table.*;
-import io.deephaven.engine.table.impl.QueryTable;
+import io.deephaven.engine.table.impl.indexer.DataIndexer;
 import io.deephaven.engine.table.impl.select.FormulaColumn;
 import io.deephaven.engine.table.impl.select.NullSelectColumn;
 import io.deephaven.engine.table.impl.select.SelectColumn;
@@ -23,16 +18,18 @@ import io.deephaven.parquet.base.ParquetMetadataFileWriter;
 import io.deephaven.parquet.base.ParquetFileWriter;
 import io.deephaven.parquet.base.ParquetUtils;
 import io.deephaven.parquet.base.RowGroupWriter;
-import io.deephaven.util.channel.SeekableChannelsProviderLoader;
 import io.deephaven.parquet.table.metadata.CodecInfo;
 import io.deephaven.parquet.table.metadata.ColumnTypeInfo;
-import io.deephaven.parquet.table.metadata.GroupingColumnInfo;
+import io.deephaven.parquet.table.metadata.DataIndexInfo;
 import io.deephaven.parquet.table.metadata.TableInfo;
-import io.deephaven.parquet.table.transfer.*;
+import io.deephaven.parquet.table.transfer.ArrayAndVectorTransfer;
+import io.deephaven.parquet.table.transfer.StringDictionary;
+import io.deephaven.parquet.table.transfer.TransferObject;
 import io.deephaven.stringset.StringSet;
 import io.deephaven.util.QueryConstants;
 import io.deephaven.util.SafeCloseable;
 import io.deephaven.util.annotations.VisibleForTesting;
+import io.deephaven.util.channel.SeekableChannelsProviderLoader;
 import io.deephaven.vector.Vector;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.parquet.bytes.HeapByteBufferAllocator;
@@ -45,44 +42,76 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.*;
+import java.nio.IntBuffer;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 
+<<<<<<< HEAD
 import static io.deephaven.parquet.base.ParquetUtils.METADATA_KEY;
 import static io.deephaven.util.channel.SeekableChannelsProvider.convertToURI;
+=======
+import static io.deephaven.base.FileUtils.convertToURI;
+>>>>>>> main
 
 /**
  * API for writing DH tables in parquet format
  */
 public class ParquetTableWriter {
+<<<<<<< HEAD
     public static final String BEGIN_POS = "dh_begin_pos";
     public static final String END_POS = "dh_end_pos";
     public static final String GROUPING_KEY = "dh_key";
+=======
+
+    public static final String METADATA_KEY = "deephaven";
+
+    public static final String GROUPING_KEY_COLUMN_NAME = "dh_key";
+    public static final String GROUPING_BEGIN_POS_COLUMN_NAME = "dh_begin_pos";
+    public static final String GROUPING_END_POS_COLUMN_NAME = "dh_end_pos";
+
+    public static final String INDEX_ROW_SET_COLUMN_NAME = "dh_row_set";
+
+    public static final String PARQUET_FILE_EXTENSION = ".parquet";
+>>>>>>> main
 
     /**
-     * Helper struct used to pass information about where to write the grouping files for each grouping column
+     * Helper struct used to pass information about where to write the index files
      */
-    static class GroupingColumnWritingInfo {
+    static class IndexWritingInfo {
         /**
-         * Parquet name of this grouping column
+         * Names of the indexing key columns
          */
-        final String parquetColumnName;
+        final String[] indexColumnNames;
         /**
-         * File path to be added in the grouping metadata of main parquet file
+         * Parquet names of the indexing key columns
+         */
+        final String[] parquetColumnNames;
+        /**
+         * File path to be added in the index metadata of main parquet file
          */
         final File destFileForMetadata;
         /**
-         * Destination path for writing the grouping file. The two filenames can differ because we write grouping files
-         * to shadow file paths first and then place them at the final path once the write is complete. But the metadata
-         * should always hold the accurate path.
+         * Destination path for writing the index file. The two filenames can differ because we write index files to
+         * shadow file paths first and then place them at the final path once the write is complete. The metadata should
+         * always hold the accurate path.
          */
         final File destFile;
 
+<<<<<<< HEAD
         GroupingColumnWritingInfo(final String parquetColumnName, final File destFileForMetadata, final File destFile) {
             this.parquetColumnName = parquetColumnName;
             this.destFileForMetadata = destFileForMetadata;
+=======
+        IndexWritingInfo(
+                final String[] indexColumnNames,
+                final String[] parquetColumnNames,
+                final File metadataFilePath,
+                final File destFile) {
+            this.indexColumnNames = indexColumnNames;
+            this.parquetColumnNames = parquetColumnNames;
+            this.metadataFilePath = metadataFilePath;
+>>>>>>> main
             this.destFile = destFile;
         }
     }
@@ -98,6 +127,7 @@ public class ParquetTableWriter {
      *        {@code destFilePath} if we are writing the parquet file to a shadow location first since the metadata
      *        should always hold the accurate path.
      * @param incomingMeta A map of metadata values to be stores in the file footer
+<<<<<<< HEAD
      * @param groupingColumnsWritingInfoMap A map of grouping column names to their respective info used for writing
      *        grouping files
      * @param metadataFileWriter The writer for the {@value ParquetUtils#METADATA_FILE_NAME} and
@@ -107,6 +137,12 @@ public class ParquetTableWriter {
      *        twice. An example is the necessary precision and scale for a BigDecimal column written as a decimal
      *        logical type.
      *
+=======
+     * @param indexInfoList Arrays containing the column names for indexes to persist as sidecar tables. Indexes that
+     *        are specified but missing will be computed on demand.
+     * @throws SchemaMappingException Error creating a parquet table schema for the given table (likely due to
+     *         unsupported types)
+>>>>>>> main
      * @throws IOException For file writing related errors
      */
     static void write(
@@ -116,6 +152,7 @@ public class ParquetTableWriter {
             @NotNull final String destFilePath,
             @NotNull final String destFilePathForMetadata,
             @NotNull final Map<String, String> incomingMeta,
+<<<<<<< HEAD
             @Nullable final Map<String, GroupingColumnWritingInfo> groupingColumnsWritingInfoMap,
             @NotNull final ParquetMetadataFileWriter metadataFileWriter,
             @NotNull final Map<String, Map<ParquetCacheTags, Object>> computedCache)
@@ -141,6 +178,51 @@ public class ParquetTableWriter {
                             groupingFileDest.getAbsolutePath(),
                             groupingFileDestForMetadata.getAbsolutePath(), Collections.emptyMap(), TableInfo.builder(),
                             NullParquetMetadataFileWriter.INSTANCE, computedCache);
+=======
+            @Nullable final List<ParquetTableWriter.IndexWritingInfo> indexInfoList)
+            throws SchemaMappingException, IOException {
+        if (t.isRefreshing()) {
+            /*
+             * We mustn't write inconsistent tables or data indexes. This check is "basic". Snapshotting logic here
+             * would probably be inappropriate, as we might be writing very large tables. Hopefully users aren't naively
+             * writing Parquet tables from within listeners or transforms without ensuring proper dependency
+             * satisfaction for the table and any indexes it has.
+             */
+            t.getUpdateGraph().checkInitiateSerialTableOperation();
+        }
+
+        final TableInfo.Builder tableInfoBuilder = TableInfo.builder();
+        List<File> cleanupFiles = null;
+        try {
+            if (indexInfoList != null) {
+                cleanupFiles = new ArrayList<>(indexInfoList.size());
+                final Path destDirPath = Paths.get(destPathName).getParent();
+                for (final ParquetTableWriter.IndexWritingInfo info : indexInfoList) {
+                    try (final SafeCloseable ignored = t.isRefreshing() ? LivenessScopeStack.open() : null) {
+                        // This will retrieve an existing index if one exists, or create a new one if not
+                        final BasicDataIndex dataIndex = Optional
+                                .ofNullable(DataIndexer.getDataIndex(t, info.indexColumnNames))
+                                .or(() -> Optional.of(DataIndexer.getOrCreateDataIndex(t, info.indexColumnNames)))
+                                .get()
+                                .transform(DataIndexTransformer.builder().invertRowSet(t.getRowSet()).build());
+                        final Table indexTable = dataIndex.table();
+
+                        cleanupFiles.add(info.destFile);
+                        tableInfoBuilder.addDataIndexes(DataIndexInfo.of(
+                                destDirPath.relativize(info.metadataFilePath.toPath()).toString(),
+                                info.parquetColumnNames));
+                        final ParquetInstructions writeInstructionsToUse;
+                        if (INDEX_ROW_SET_COLUMN_NAME.equals(dataIndex.rowSetColumnName())) {
+                            writeInstructionsToUse = writeInstructions;
+                        } else {
+                            writeInstructionsToUse = new ParquetInstructions.Builder(writeInstructions)
+                                    .addColumnNameMapping(INDEX_ROW_SET_COLUMN_NAME, dataIndex.rowSetColumnName())
+                                    .build();
+                        }
+                        write(indexTable, indexTable.getDefinition(), writeInstructionsToUse,
+                                info.destFile.getAbsolutePath(), Collections.emptyMap(), TableInfo.builder());
+                    }
+>>>>>>> main
                 }
             }
             write(t, definition, writeInstructions, destFilePath, destFilePathForMetadata, incomingMeta,
@@ -364,8 +446,13 @@ public class ParquetTableWriter {
 
         final Map<String, String> extraMetaData = new HashMap<>(tableMeta);
         extraMetaData.put(METADATA_KEY, tableInfoBuilder.build().serializeToJSON());
+<<<<<<< HEAD
         return new ParquetFileWriter(destFilePath, destFilePathForMetadata,
                 SeekableChannelsProviderLoader.getInstance().fromServiceLoader(convertToURI(destFilePath), null),
+=======
+        return new ParquetFileWriter(path,
+                SeekableChannelsProviderLoader.getInstance().fromServiceLoader(convertToURI(path, false), null),
+>>>>>>> main
                 writeInstructions.getTargetPageSize(),
                 new HeapByteBufferAllocator(), mappedSchema.getParquetSchema(),
                 writeInstructions.getCompressionCodecName(), extraMetaData, metadataFileWriter);
@@ -505,23 +592,5 @@ public class ParquetTableWriter {
                 }
             } while (transferObject.hasMoreDataToBuffer());
         }
-    }
-
-    private static Table groupingAsTable(Table tableToSave, String columnName) {
-        final QueryTable coalesced = (QueryTable) tableToSave.coalesce();
-        final Table tableToGroup = (coalesced.isRefreshing() ? (QueryTable) coalesced.silent() : coalesced)
-                .withAttributes(Map.of(Table.BLINK_TABLE_ATTRIBUTE, true)); // We want persistent first/last-by
-        final Table grouped = tableToGroup
-                .view(List.of(Selectable.of(ColumnName.of(GROUPING_KEY), ColumnName.of(columnName)),
-                        Selectable.of(ColumnName.of(BEGIN_POS), RawString.of("ii")), // Range start, inclusive
-                        Selectable.of(ColumnName.of(END_POS), RawString.of("ii+1")))) // Range end, exclusive
-                .aggBy(List.of(Aggregation.AggFirst(BEGIN_POS), Aggregation.AggLast(END_POS)),
-                        List.of(ColumnName.of(GROUPING_KEY)));
-        final Table invalid = grouped.where(BEGIN_POS + " != 0 && " + BEGIN_POS + " != " + END_POS + "_[ii-1]");
-        if (!invalid.isEmpty()) {
-            throw new UncheckedDeephavenException(
-                    "Range grouping is not possible for column because some indices are not contiguous");
-        }
-        return grouped;
     }
 }
