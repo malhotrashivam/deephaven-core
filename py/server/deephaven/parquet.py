@@ -13,7 +13,7 @@ import jpy
 from deephaven import DHError
 from deephaven.column import Column
 from deephaven.dtypes import DType
-from deephaven.table import Table
+from deephaven.table import Table, PartitionedTable
 from deephaven.experimental import s3
 
 _JParquetTools = jpy.get_type("io.deephaven.parquet.table.ParquetTools")
@@ -43,6 +43,8 @@ def _build_parquet_instructions(
     is_refreshing: bool = False,
     for_read: bool = True,
     force_build: bool = False,
+    generate_metadata_files: Optional[bool] = None,
+    base_name: Optional[str] = None,
     special_instructions: Optional[s3.S3Instructions] = None,
 ):
     if not any(
@@ -55,10 +57,12 @@ def _build_parquet_instructions(
             is_legacy_parquet,
             target_page_size is not None,
             is_refreshing,
+            generate_metadata_files is not None,
+            base_name is not None,
             special_instructions is not None
         ]
     ):
-        return None
+        return _JParquetInstructions.EMPTY
 
     builder = _JParquetInstructions.builder()
     if col_instructions is not None:
@@ -91,6 +95,12 @@ def _build_parquet_instructions(
 
     if is_refreshing:
         builder.setIsRefreshing(is_refreshing)
+
+    if generate_metadata_files:
+        builder.setGenerateMetadataFiles(generate_metadata_files)
+
+    if base_name:
+        builder.setBaseNameForPartitionedParquetData(base_name)
 
     if special_instructions is not None:
         builder.setSpecialInstructions(special_instructions.j_object)
@@ -144,8 +154,8 @@ def read(
 
     Args:
         path (str): the file or directory to examine
-        col_instructions (Optional[List[ColumnInstruction]]): instructions for customizations while reading, None by
-            default.
+        col_instructions (Optional[List[ColumnInstruction]]): instructions for customizations while reading particular
+            columns, default is None, which means no specialization for any column
         is_legacy_parquet (bool): if the parquet data is legacy
         is_refreshing (bool): if the parquet data represents a refreshing source
         file_layout (Optional[ParquetFileLayout]): the parquet file layout, by default None. When None, the layout is
@@ -234,20 +244,30 @@ def write(
     max_dictionary_keys: Optional[int] = None,
     max_dictionary_size: Optional[int] = None,
     target_page_size: Optional[int] = None,
+    generate_metadata_files: Optional[bool] = None,
 ) -> None:
     """ Write a table to a Parquet file.
 
     Args:
         table (Table): the source table
         path (str): the destination file path; the file name should end in a ".parquet" extension. If the path
-            includes non-existing directories they are created. If there is an error, any intermediate directories
+            includes any non-existing directories, they are created. If there is an error, any intermediate directories
             previously created are removed; note this makes this method unsafe for concurrent use
-        col_definitions (Optional[List[Column]]): the column definitions to use, default is None
-        col_instructions (Optional[List[ColumnInstruction]]): instructions for customizations while writing, default is None
-        compression_codec_name (Optional[str]): the default compression codec to use, if not specified, defaults to SNAPPY
-        max_dictionary_keys (Optional[int]): the maximum dictionary keys allowed, if not specified, defaults to 2^20 (1,048,576)
-        max_dictionary_size (Optional[int]): the maximum dictionary size (in bytes) allowed, defaults to 2^20 (1,048,576)
+        col_definitions (Optional[List[Column]]): the column definitions to use for writing, instead of the definitions
+            implied by the table. Default is None, which means use the column definitions implied by the table
+        col_instructions (Optional[List[ColumnInstruction]]): instructions for customizations while writing particular
+            columns, default is None, which means no specialization for any column
+        compression_codec_name (Optional[str]): the compression codec to use. Allowed values include "UNCOMPRESSED",
+            "SNAPPY", "GZIP", "LZO", "LZ4", "LZ4_RAW", "ZSTD", etc. If not specified, defaults to "SNAPPY".
+        max_dictionary_keys (Optional[int]): the maximum number of unique keys the writer should add to a dictionary page
+            before switching to non-dictionary encoding, never evaluated for non-String columns, defaults to 2^20 (1,048,576)
+        max_dictionary_size (Optional[int]): the maximum number of bytes the writer should add to the dictionary before
+            switching to non-dictionary encoding, never evaluated for non-String columns, defaults to 2^20 (1,048,576)
         target_page_size (Optional[int]): the target page size in bytes, if not specified, defaults to 2^20 bytes (1 MiB)
+        generate_metadata_files (Optional[bool]): whether to generate parquet _metadata and _common_metadata files,
+            defaults to False. Generating these files can help speed up reading of partitioned parquet data because these
+            files contain metadata (including schema) about the entire dataset, which can be used to skip reading some
+            files.
 
     Raises:
         DHError
@@ -260,6 +280,7 @@ def write(
             max_dictionary_size=max_dictionary_size,
             target_page_size=target_page_size,
             for_read=False,
+            generate_metadata_files=generate_metadata_files,
         )
 
         table_definition = None
@@ -267,15 +288,87 @@ def write(
             table_definition = _JTableDefinition.of([col.j_column_definition for col in col_definitions])
 
         if table_definition:
-            if write_instructions:
-                _JParquetTools.writeTable(table.j_table, path, table_definition, write_instructions)
-            else:
-                _JParquetTools.writeTable(table.j_table, _JFile(path), table_definition)
+            _JParquetTools.writeTable(table.j_table, path, table_definition, write_instructions)
         else:
-            if write_instructions:
-                _JParquetTools.writeTable(table.j_table, _JFile(path), write_instructions)
-            else:
-                _JParquetTools.writeTable(table.j_table, path)
+            _JParquetTools.writeTable(table.j_table, _JFile(path), write_instructions)
+    except Exception as e:
+        raise DHError(e, "failed to write to parquet data.") from e
+
+
+def write_partitioned(
+        table: Union[Table, PartitionedTable],
+        destination_dir: str,
+        col_definitions: Optional[List[Column]] = None,
+        col_instructions: Optional[List[ColumnInstruction]] = None,
+        compression_codec_name: Optional[str] = None,
+        max_dictionary_keys: Optional[int] = None,
+        max_dictionary_size: Optional[int] = None,
+        target_page_size: Optional[int] = None,
+        base_name: Optional[str] = None,
+        generate_metadata_files: Optional[bool] = None,
+) -> None:
+    """ Write table to disk in parquet format with the partitioning columns written as "key=value" format in a nested
+    directory structure. For example, for a partitioned column "date", we will have a directory structure like
+    "date=2021-01-01/<base_name>.parquet", "date=2021-01-02/<base_name>.parquet", etc. where "2021-01-01" and
+    "2021-01-02" are the partition values and "<base_name>" is passed as an optional parameter. All the necessary
+    subdirectories are created if they do not exist.
+
+    Args:
+        table (Table): the source table or partitioned table
+        destination_dir (str): The path to destination root directory in which the partitioned parquet data will be stored
+            in a nested directory structure format. Non-existing directories in the provided path will be created.
+        col_definitions (Optional[List[Column]]): the column definitions to use for writing, instead of the definitions
+            implied by the table. Default is None, which means use the column definitions implied by the table
+        col_instructions (Optional[List[ColumnInstruction]]): instructions for customizations while writing particular
+            columns, default is None, which means no specialization for any column
+        compression_codec_name (Optional[str]): the compression codec to use. Allowed values include "UNCOMPRESSED",
+            "SNAPPY", "GZIP", "LZO", "LZ4", "LZ4_RAW", "ZSTD", etc. If not specified, defaults to "SNAPPY".
+        max_dictionary_keys (Optional[int]): the maximum number of unique keys the writer should add to a dictionary page
+            before switching to non-dictionary encoding; never evaluated for non-String columns , defaults to 2^20 (1,048,576)
+        max_dictionary_size (Optional[int]): the maximum number of bytes the writer should add to the dictionary before
+            switching to non-dictionary encoding, never evaluated for non-String columns, defaults to 2^20 (1,048,576)
+        target_page_size (Optional[int]): the target page size in bytes, if not specified, defaults to 2^20 bytes (1 MiB)
+        base_name (Optional[str]): The base name for the individual partitioned tables, if not specified, defaults to
+            `{uuid}`, so files will have names of the format `<uuid>.parquet` where `uuid` is a randomly generated UUID.
+            Users can provide the following tokens in the base_name:
+            - The token `{uuid}` will be replaced with a random UUID. For example, a base name of
+            "table-{uuid}" will result in files named like "table-8e8ab6b2-62f2-40d1-8191-1c5b70c5f330.parquet.parquet".
+            - The token `{partitions}` will be replaced with an underscore-delimited, concatenated string of
+            partition values. For example, for a base name of "{partitions}-table" and partitioning columns "PC1" and
+            "PC2", the file name is generated by concatenating the partition values "PC1=pc1" and "PC2=pc2"
+            with an underscore followed by "-table.parquet", like "PC1=pc1_PC2=pc2-table.parquet".
+            - The token `{i}` will be replaced with an automatically incremented integer for files in a directory. For
+            example, a base name of "table-{i}" will result in files named like "PC=partition1/table-0.parquet",
+            "PC=partition1/table-1.parquet", etc.
+        generate_metadata_files (Optional[bool]): whether to generate parquet _metadata and _common_metadata files,
+            defaults to False. Generating these files can help speed up reading of partitioned parquet data because these
+            files contain metadata (including schema) about the entire dataset, which can be used to skip reading some
+            files.
+
+    Raises:
+        DHError
+    """
+    try:
+        write_instructions = _build_parquet_instructions(
+            col_instructions=col_instructions,
+            compression_codec_name=compression_codec_name,
+            max_dictionary_keys=max_dictionary_keys,
+            max_dictionary_size=max_dictionary_size,
+            target_page_size=target_page_size,
+            for_read=False,
+            generate_metadata_files=generate_metadata_files,
+            base_name=base_name,
+        )
+
+        table_definition = None
+        if col_definitions is not None:
+            table_definition = _JTableDefinition.of([col.j_column_definition for col in col_definitions])
+
+        if table_definition:
+            _JParquetTools.writeKeyValuePartitionedTable(table.j_object, table_definition, destination_dir,
+                                                         write_instructions)
+        else:
+            _JParquetTools.writeKeyValuePartitionedTable(table.j_object, destination_dir, write_instructions)
     except Exception as e:
         raise DHError(e, "failed to write to parquet data.") from e
 
@@ -290,6 +383,7 @@ def batch_write(
     max_dictionary_size: Optional[int] = None,
     target_page_size: Optional[int] = None,
     grouping_cols: Optional[List[str]] = None,
+    generate_metadata_files: Optional[bool] = None,
 ):
     """ Writes tables to disk in parquet format to a supplied set of paths.
 
@@ -303,13 +397,21 @@ def batch_write(
         paths (List[str]): the destinations paths. Any non existing directories in the paths provided are
             created. If there is an error, any intermediate directories previously created are removed; note this makes
             this method unsafe for concurrent use
-        col_definitions (List[Column]): the column definitions to use
+        col_definitions (Optional[List[Column]]): the column definitions to use for writing, instead of the definitions
+            implied by the table. Default is None, which means use the column definitions implied by the table
         col_instructions (Optional[List[ColumnInstruction]]): instructions for customizations while writing
-        compression_codec_name (Optional[str]): the compression codec to use, if not specified, defaults to SNAPPY
-        max_dictionary_keys (Optional[int]): the maximum dictionary keys allowed, if not specified, defaults to 2^20 (1,048,576)
-        max_dictionary_size (Optional[int]): the maximum dictionary size (in bytes) allowed, defaults to 2^20 (1,048,576)
+        compression_codec_name (Optional[str]): the compression codec to use. Allowed values include "UNCOMPRESSED",
+            "SNAPPY", "GZIP", "LZO", "LZ4", "LZ4_RAW", "ZSTD", etc. If not specified, defaults to "SNAPPY".
+        max_dictionary_keys (Optional[int]): the maximum number of unique keys the writer should add to a dictionary page
+            before switching to non-dictionary encoding; never evaluated for non-String columns , defaults to 2^20 (1,048,576)
+        max_dictionary_size (Optional[int]): the maximum number of bytes the writer should add to the dictionary before
+            switching to non-dictionary encoding, never evaluated for non-String columns, defaults to 2^20 (1,048,576)
         target_page_size (Optional[int]): the target page size in bytes, if not specified, defaults to 2^20 bytes (1 MiB)
         grouping_cols (Optional[List[str]]): the group column names
+        generate_metadata_files (Optional[bool]): whether to generate parquet _metadata and _common_metadata files,
+            defaults to False. Generating these files can help speed up reading of partitioned parquet data because these
+            files contain metadata (including schema) about the entire dataset, which can be used to skip reading some
+            files.
 
     Raises:
         DHError
@@ -322,6 +424,7 @@ def batch_write(
             max_dictionary_size=max_dictionary_size,
             target_page_size=target_page_size,
             for_read=False,
+            generate_metadata_files=generate_metadata_files,
         )
 
         table_definition = _JTableDefinition.of([col.j_column_definition for col in col_definitions])

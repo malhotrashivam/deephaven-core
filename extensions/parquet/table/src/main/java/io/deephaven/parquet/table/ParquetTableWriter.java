@@ -47,33 +47,19 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 
-<<<<<<< HEAD
 import static io.deephaven.parquet.base.ParquetUtils.METADATA_KEY;
-import static io.deephaven.util.channel.SeekableChannelsProvider.convertToURI;
-=======
 import static io.deephaven.base.FileUtils.convertToURI;
->>>>>>> main
 
 /**
  * API for writing DH tables in parquet format
  */
 public class ParquetTableWriter {
-<<<<<<< HEAD
-    public static final String BEGIN_POS = "dh_begin_pos";
-    public static final String END_POS = "dh_end_pos";
-    public static final String GROUPING_KEY = "dh_key";
-=======
-
-    public static final String METADATA_KEY = "deephaven";
-
     public static final String GROUPING_KEY_COLUMN_NAME = "dh_key";
     public static final String GROUPING_BEGIN_POS_COLUMN_NAME = "dh_begin_pos";
     public static final String GROUPING_END_POS_COLUMN_NAME = "dh_end_pos";
 
     public static final String INDEX_ROW_SET_COLUMN_NAME = "dh_row_set";
 
-    public static final String PARQUET_FILE_EXTENSION = ".parquet";
->>>>>>> main
 
     /**
      * Helper struct used to pass information about where to write the index files
@@ -88,7 +74,7 @@ public class ParquetTableWriter {
          */
         final String[] parquetColumnNames;
         /**
-         * File path to be added in the index metadata of main parquet file
+         * File path to be added in the index metadata of the main parquet file
          */
         final File destFileForMetadata;
         /**
@@ -98,20 +84,14 @@ public class ParquetTableWriter {
          */
         final File destFile;
 
-<<<<<<< HEAD
-        GroupingColumnWritingInfo(final String parquetColumnName, final File destFileForMetadata, final File destFile) {
-            this.parquetColumnName = parquetColumnName;
-            this.destFileForMetadata = destFileForMetadata;
-=======
         IndexWritingInfo(
                 final String[] indexColumnNames,
                 final String[] parquetColumnNames,
-                final File metadataFilePath,
+                final File destFileForMetadata,
                 final File destFile) {
             this.indexColumnNames = indexColumnNames;
             this.parquetColumnNames = parquetColumnNames;
-            this.metadataFilePath = metadataFilePath;
->>>>>>> main
+            this.destFileForMetadata = destFileForMetadata;
             this.destFile = destFile;
         }
     }
@@ -127,9 +107,8 @@ public class ParquetTableWriter {
      *        {@code destFilePath} if we are writing the parquet file to a shadow location first since the metadata
      *        should always hold the accurate path.
      * @param incomingMeta A map of metadata values to be stores in the file footer
-<<<<<<< HEAD
-     * @param groupingColumnsWritingInfoMap A map of grouping column names to their respective info used for writing
-     *        grouping files
+     * @param indexInfoList Arrays containing the column names for indexes to persist as sidecar tables. Indexes that
+     *        are specified but missing will be computed on demand.
      * @param metadataFileWriter The writer for the {@value ParquetUtils#METADATA_FILE_NAME} and
      *        {@value ParquetUtils#COMMON_METADATA_FILE_NAME} files
      * @param computedCache When we need to perform some computation depending on column data to make a decision
@@ -137,12 +116,6 @@ public class ParquetTableWriter {
      *        twice. An example is the necessary precision and scale for a BigDecimal column written as a decimal
      *        logical type.
      *
-=======
-     * @param indexInfoList Arrays containing the column names for indexes to persist as sidecar tables. Indexes that
-     *        are specified but missing will be computed on demand.
-     * @throws SchemaMappingException Error creating a parquet table schema for the given table (likely due to
-     *         unsupported types)
->>>>>>> main
      * @throws IOException For file writing related errors
      */
     static void write(
@@ -152,35 +125,9 @@ public class ParquetTableWriter {
             @NotNull final String destFilePath,
             @NotNull final String destFilePathForMetadata,
             @NotNull final Map<String, String> incomingMeta,
-<<<<<<< HEAD
-            @Nullable final Map<String, GroupingColumnWritingInfo> groupingColumnsWritingInfoMap,
+            @Nullable final List<ParquetTableWriter.IndexWritingInfo> indexInfoList,
             @NotNull final ParquetMetadataFileWriter metadataFileWriter,
-            @NotNull final Map<String, Map<ParquetCacheTags, Object>> computedCache)
-            throws IOException {
-        final TableInfo.Builder tableInfoBuilder = TableInfo.builder();
-        List<File> cleanupFiles = null;
-        try {
-            if (groupingColumnsWritingInfoMap != null) {
-                cleanupFiles = new ArrayList<>(groupingColumnsWritingInfoMap.size());
-                final Path destDirPath = Paths.get(destFilePath).getParent();
-                for (final Map.Entry<String, GroupingColumnWritingInfo> entry : groupingColumnsWritingInfoMap
-                        .entrySet()) {
-                    final String groupingColumnName = entry.getKey();
-                    final Table auxiliaryTable = groupingAsTable(t, groupingColumnName);
-                    final String parquetColumnName = entry.getValue().parquetColumnName;
-                    final File groupingFileDestForMetadata = entry.getValue().destFileForMetadata;
-                    final File groupingFileDest = entry.getValue().destFile;
-                    cleanupFiles.add(groupingFileDest);
-                    tableInfoBuilder.addGroupingColumns(GroupingColumnInfo.of(parquetColumnName,
-                            destDirPath.relativize(groupingFileDestForMetadata.toPath()).toString()));
-                    // We don't accumulate metadata from grouping files into the main metadata file
-                    write(auxiliaryTable, auxiliaryTable.getDefinition(), writeInstructions,
-                            groupingFileDest.getAbsolutePath(),
-                            groupingFileDestForMetadata.getAbsolutePath(), Collections.emptyMap(), TableInfo.builder(),
-                            NullParquetMetadataFileWriter.INSTANCE, computedCache);
-=======
-            @Nullable final List<ParquetTableWriter.IndexWritingInfo> indexInfoList)
-            throws SchemaMappingException, IOException {
+            @NotNull final Map<String, Map<ParquetCacheTags, Object>> computedCache) throws IOException {
         if (t.isRefreshing()) {
             /*
              * We mustn't write inconsistent tables or data indexes. This check is "basic". Snapshotting logic here
@@ -196,7 +143,7 @@ public class ParquetTableWriter {
         try {
             if (indexInfoList != null) {
                 cleanupFiles = new ArrayList<>(indexInfoList.size());
-                final Path destDirPath = Paths.get(destPathName).getParent();
+                final Path destDirPath = Paths.get(destFilePath).getParent();
                 for (final ParquetTableWriter.IndexWritingInfo info : indexInfoList) {
                     try (final SafeCloseable ignored = t.isRefreshing() ? LivenessScopeStack.open() : null) {
                         // This will retrieve an existing index if one exists, or create a new one if not
@@ -209,7 +156,7 @@ public class ParquetTableWriter {
 
                         cleanupFiles.add(info.destFile);
                         tableInfoBuilder.addDataIndexes(DataIndexInfo.of(
-                                destDirPath.relativize(info.metadataFilePath.toPath()).toString(),
+                                destDirPath.relativize(info.destFileForMetadata.toPath()).toString(),
                                 info.parquetColumnNames));
                         final ParquetInstructions writeInstructionsToUse;
                         if (INDEX_ROW_SET_COLUMN_NAME.equals(dataIndex.rowSetColumnName())) {
@@ -219,10 +166,12 @@ public class ParquetTableWriter {
                                     .addColumnNameMapping(INDEX_ROW_SET_COLUMN_NAME, dataIndex.rowSetColumnName())
                                     .build();
                         }
+                        // We don't accumulate metadata from grouping files into the main metadata file
                         write(indexTable, indexTable.getDefinition(), writeInstructionsToUse,
-                                info.destFile.getAbsolutePath(), Collections.emptyMap(), TableInfo.builder());
+                                info.destFile.getAbsolutePath(), info.destFileForMetadata.getAbsolutePath(),
+                                Collections.emptyMap(), TableInfo.builder(), NullParquetMetadataFileWriter.INSTANCE,
+                                computedCache);
                     }
->>>>>>> main
                 }
             }
             write(t, definition, writeInstructions, destFilePath, destFilePathForMetadata, incomingMeta,
@@ -446,13 +395,8 @@ public class ParquetTableWriter {
 
         final Map<String, String> extraMetaData = new HashMap<>(tableMeta);
         extraMetaData.put(METADATA_KEY, tableInfoBuilder.build().serializeToJSON());
-<<<<<<< HEAD
         return new ParquetFileWriter(destFilePath, destFilePathForMetadata,
-                SeekableChannelsProviderLoader.getInstance().fromServiceLoader(convertToURI(destFilePath), null),
-=======
-        return new ParquetFileWriter(path,
-                SeekableChannelsProviderLoader.getInstance().fromServiceLoader(convertToURI(path, false), null),
->>>>>>> main
+                SeekableChannelsProviderLoader.getInstance().fromServiceLoader(convertToURI(destFilePath, false), null),
                 writeInstructions.getTargetPageSize(),
                 new HeapByteBufferAllocator(), mappedSchema.getParquetSchema(),
                 writeInstructions.getCompressionCodecName(), extraMetaData, metadataFileWriter);

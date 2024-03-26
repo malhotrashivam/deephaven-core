@@ -15,18 +15,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.nio.channels.SeekableByteChannel;
-<<<<<<< HEAD
-import java.nio.file.Path;
 import java.util.*;
 
 import static io.deephaven.parquet.base.ParquetUtils.MAGIC;
-import static io.deephaven.util.channel.SeekableChannelsProvider.convertToURI;
-=======
-import java.nio.charset.StandardCharsets;
-import java.util.*;
-
 import static io.deephaven.base.FileUtils.convertToURI;
->>>>>>> main
 
 /**
  * Top level accessor for a parquet file which can read both from a file path string or a CLI style file URI,

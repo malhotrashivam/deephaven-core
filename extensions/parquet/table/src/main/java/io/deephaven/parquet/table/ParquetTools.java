@@ -10,7 +10,7 @@ import io.deephaven.base.FileUtils;
 import io.deephaven.base.Pair;
 import io.deephaven.base.verify.Require;
 import io.deephaven.engine.context.ExecutionContext;
-<<<<<<< HEAD
+import io.deephaven.engine.liveness.LivenessScopeStack;
 import io.deephaven.engine.primitive.iterator.CloseableIterator;
 import io.deephaven.engine.table.ColumnDefinition;
 import io.deephaven.engine.table.ColumnSource;
@@ -23,14 +23,13 @@ import io.deephaven.engine.table.impl.locations.util.TableDataRefreshService;
 import io.deephaven.engine.updategraph.UpdateSourceRegistrar;
 import io.deephaven.parquet.base.ParquetMetadataFileWriter;
 import io.deephaven.parquet.base.NullParquetMetadataFileWriter;
+import io.deephaven.util.SafeCloseable;
 import io.deephaven.util.channel.SeekableChannelsProvider;
 import io.deephaven.util.channel.SeekableChannelsProviderLoader;
 import io.deephaven.util.channel.SeekableChannelsProviderPlugin;
 import io.deephaven.vector.*;
 import io.deephaven.stringset.StringSet;
-=======
 import io.deephaven.engine.table.*;
->>>>>>> main
 import io.deephaven.engine.table.impl.PartitionAwareSourceTable;
 import io.deephaven.engine.table.impl.SimpleSourceTable;
 import io.deephaven.engine.table.impl.indexer.DataIndexer;
@@ -40,9 +39,7 @@ import io.deephaven.engine.table.impl.locations.impl.KnownLocationKeyFinder;
 import io.deephaven.engine.table.impl.locations.impl.PollingTableLocationProvider;
 import io.deephaven.engine.table.impl.locations.impl.StandaloneTableKey;
 import io.deephaven.engine.table.impl.locations.impl.TableLocationKeyFinder;
-import io.deephaven.engine.table.impl.locations.util.TableDataRefreshService;
 import io.deephaven.engine.table.impl.sources.regioned.RegionedTableComponentFactoryImpl;
-import io.deephaven.engine.updategraph.UpdateSourceRegistrar;
 import io.deephaven.internal.log.LoggerFactory;
 import io.deephaven.io.logger.Logger;
 import io.deephaven.parquet.base.ParquetFileReader;
@@ -53,14 +50,9 @@ import io.deephaven.parquet.table.layout.ParquetSingleFileLayout;
 import io.deephaven.parquet.table.location.ParquetTableLocationFactory;
 import io.deephaven.parquet.table.location.ParquetTableLocationKey;
 import io.deephaven.parquet.table.metadata.ColumnTypeInfo;
-import io.deephaven.stringset.StringSet;
 import io.deephaven.util.SimpleTypeMap;
 import io.deephaven.util.annotations.VisibleForTesting;
 import io.deephaven.util.channel.CachedChannelProvider;
-import io.deephaven.util.channel.SeekableChannelsProvider;
-import io.deephaven.util.channel.SeekableChannelsProviderLoader;
-import io.deephaven.util.channel.SeekableChannelsProviderPlugin;
-import io.deephaven.vector.*;
 import org.apache.commons.lang3.mutable.MutableObject;
 import org.apache.parquet.format.converter.ParquetMetadataConverter;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
@@ -77,23 +69,18 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
-<<<<<<< HEAD
 import java.util.function.Supplier;
-=======
->>>>>>> main
 import java.util.stream.Collectors;
 
 import static io.deephaven.base.FileUtils.convertToURI;
 import static io.deephaven.parquet.base.ParquetFileReader.FILE_URI_SCHEME;
-<<<<<<< HEAD
-import static io.deephaven.parquet.table.ParquetTableWriter.getSchemaForTable;
+import static io.deephaven.parquet.table.ParquetInstructions.FILE_INDEX_TOKEN;
+import static io.deephaven.parquet.table.ParquetInstructions.PARTITIONS_TOKEN;
+import static io.deephaven.parquet.table.ParquetInstructions.UUID_TOKEN;
 import static io.deephaven.parquet.base.ParquetUtils.PARQUET_FILE_EXTENSION;
 import static io.deephaven.parquet.base.ParquetUtils.COMMON_METADATA_FILE_NAME;
 import static io.deephaven.parquet.base.ParquetUtils.METADATA_FILE_NAME;
-import static io.deephaven.util.channel.SeekableChannelsProvider.convertToURI;
-=======
-import static io.deephaven.parquet.table.ParquetTableWriter.*;
->>>>>>> main
+import static io.deephaven.parquet.table.ParquetTableWriter.getSchemaForTable;
 import static io.deephaven.util.type.TypeUtils.getUnboxedTypeIfBoxed;
 
 /**
@@ -103,6 +90,7 @@ import static io.deephaven.util.type.TypeUtils.getUnboxedTypeIfBoxed;
 public class ParquetTools {
 
     private static final int MAX_PARTITIONING_LEVELS_INFERENCE = 32;
+    private static final String[][] EMPTY_INDEXES = new String[0][];
 
     private ParquetTools() {}
 
@@ -517,106 +505,96 @@ public class ParquetTools {
     }
 
     /**
-<<<<<<< HEAD
      * Write table to disk in parquet format with {@link TableDefinition#getPartitioningColumns() partitioning columns}
      * written as "key=value" format in a nested directory structure. To generate these individual partitions, this
      * method will call {@link Table#partitionBy(String...) partitionBy} on all the partitioning columns of provided
-     * table. The parquet files generated will have names of the format {@code "uuid.parquet"} where "uuid" is a random
-     * UUID. To provide custom file names, use
-     * {@link #writeKeyValuePartitionedTable(Table, File, String, ParquetInstructions)} instead.
+     * table. The generated parquet files will have names of the format provided by
+     * {@link ParquetInstructions#baseNameForPartitionedParquetData()}. Any indexing columns present on the source table
+     * will be written as sidecar tables. To write only a subset of the indexes or add additional indexes while writing,
+     * use {@link #writeKeyValuePartitionedTable(Table, String, ParquetInstructions, String[][])}.
      *
      * @param sourceTable The table to partition and write
-     * @param destinationDir The destination root directory to store partitioned data in nested format. Non-existing
-     *        directories are created.
+     * @param destinationDir The path to destination root directory to store partitioned data in nested format.
+     *        Non-existing directories are created.
      * @param writeInstructions Write instructions for customizations while writing
      */
     public static void writeKeyValuePartitionedTable(@NotNull final Table sourceTable,
-            @NotNull final File destinationDir,
+            @NotNull final String destinationDir,
             @NotNull final ParquetInstructions writeInstructions) {
-        writeKeyValuePartitionedTable(sourceTable, destinationDir, "{uuid}", writeInstructions);
+        writeKeyValuePartitionedTable(sourceTable, sourceTable.getDefinition(), destinationDir,
+                writeInstructions, indexedColumnNames(sourceTable));
     }
 
     /**
      * Write table to disk in parquet format with {@link TableDefinition#getPartitioningColumns() partitioning columns}
      * written as "key=value" format in a nested directory structure. To generate these individual partitions, this
      * method will call {@link Table#partitionBy(String...) partitionBy} on all the partitioning columns of provided
-     * table.
+     * table. The generated parquet files will have names of the format provided by
+     * {@link ParquetInstructions#baseNameForPartitionedParquetData()}.
      *
      * @param sourceTable The table to partition and write
-     * @param destinationDir The destination root directory to store partitioned data in nested format. Non-existing
-     *        directories are created.
-     * @param baseName The base name for the individual partitioned tables. For example, a base name of "table" will
-     *        result in files named "PC=partition1/table.parquet", "PC=partition2/table.parquet", etc., where "PC" is a
-     *        partitioning column. Users can also provide the following tokens to be replaced in the base name:
-     *        <ul>
-     *        <li>The token {@code {uuid}} will be replaced with a random UUID. For example, a base name of
-     *        "table-{uuid}" will result in files named like
-     *        "table-8e8ab6b2-62f2-40d1-8191-1c5b70c5f330.parquet.parquet".</li>
-     *        <li>The token {@code {partitions}} will be replaced with an underscore-delimited, concatenated string of
-     *        partition values. For example, a base name of "{partitions}-table" will result in files like
-     *        "PC1=partition1/PC2=partitionA/PC1=partition1_PC2=partitionA-table.parquet", where "PC1" and "PC2" are
-     *        partitioning columns.</li>
-     *        </ul>
+     * @param destinationDir The path to destination root directory to store partitioned data in nested format.
+     *        Non-existing directories are created.
      * @param writeInstructions Write instructions for customizations while writing
+     * @param indexColumnArr Arrays containing the column names for indexes to persist. The write operation will store
+     *        the index info as sidecar tables. This argument is used to narrow the set of indexes to write, or to be
+     *        explicit about the expected set of indexes present on all sources. Indexes that are specified but missing
+     *        will be computed on demand.
      */
     public static void writeKeyValuePartitionedTable(@NotNull final Table sourceTable,
-            @NotNull final File destinationDir,
-            @NotNull final String baseName,
-            @NotNull final ParquetInstructions writeInstructions) {
-        writeKeyValuePartitionedTable(sourceTable, sourceTable.getDefinition(), destinationDir, baseName,
-                writeInstructions);
+            @NotNull final String destinationDir,
+            @NotNull final ParquetInstructions writeInstructions,
+            @Nullable final String[][] indexColumnArr) {
+        writeKeyValuePartitionedTable(sourceTable, sourceTable.getDefinition(), destinationDir,
+                writeInstructions, indexColumnArr);
     }
 
     /**
      * Write table to disk in parquet format with {@link TableDefinition#getPartitioningColumns() partitioning columns}
      * written as "key=value" format in a nested directory structure. To generate these individual partitions, this
      * method will call {@link Table#partitionBy(String...) partitionBy} on all the partitioning columns in the provided
-     * table definition. The parquet files generated will have names of the format {@code "uuid.parquet"} where "uuid"
-     * is a random UUID. To provide custom file names, use
-     * {@link #writeKeyValuePartitionedTable(Table, TableDefinition, File, String, ParquetInstructions)} instead.
+     * table definition. The generated parquet files will have names of the format provided by
+     * {@link ParquetInstructions#baseNameForPartitionedParquetData()}. Any indexing columns present on the source table
+     * will be written as sidecar tables. To write only a subset of the indexes or add additional indexes while writing,
+     * use {@link #writeKeyValuePartitionedTable(Table, TableDefinition, String, ParquetInstructions, String[][])}.
      *
      * @param sourceTable The table to partition and write
      * @param definition table definition to use (instead of the one implied by the table itself)
-     * @param destinationDir The destination root directory to store partitioned data in nested format. Non-existing
-     *        directories are created.
+     * @param destinationDir The path to destination root directory to store partitioned data in nested format.
+     *        Non-existing directories are created.
      * @param writeInstructions Write instructions for customizations while writing
      */
     public static void writeKeyValuePartitionedTable(@NotNull final Table sourceTable,
             @NotNull final TableDefinition definition,
-            @NotNull final File destinationDir,
+            @NotNull final String destinationDir,
             @NotNull final ParquetInstructions writeInstructions) {
-        writeKeyValuePartitionedTable(sourceTable, definition, destinationDir, "{uuid}", writeInstructions);
+        writeKeyValuePartitionedTable(sourceTable, definition, destinationDir, writeInstructions,
+                indexedColumnNames(sourceTable));
+
     }
 
     /**
      * Write table to disk in parquet format with {@link TableDefinition#getPartitioningColumns() partitioning columns}
      * written as "key=value" format in a nested directory structure. To generate these individual partitions, this
      * method will call {@link Table#partitionBy(String...) partitionBy} on all the partitioning columns in the provided
-     * table definition.
+     * table definition. The generated parquet files will have names of the format provided by
+     * {@link ParquetInstructions#baseNameForPartitionedParquetData()}.
      *
      * @param sourceTable The table to partition and write
      * @param definition table definition to use (instead of the one implied by the table itself)
-     * @param destinationDir The destination root directory to store partitioned data in nested format. Non-existing
-     *        directories are created.
-     * @param baseName The base name for the individual partitioned tables. For example, a base name of "table" will
-     *        result in files named "PC=partition1/table.parquet", "PC=partition2/table.parquet", etc., where "PC" is a
-     *        partitioning column. Users can also provide the following tokens to be replaced in the base name:
-     *        <ul>
-     *        <li>The token {@code {uuid}} will be replaced with a random UUID. For example, a base name of
-     *        "table-{uuid}" will result in files named like
-     *        "table-8e8ab6b2-62f2-40d1-8191-1c5b70c5f330.parquet.parquet".</li>
-     *        <li>The token {@code {partitions}} will be replaced with an underscore-delimited, concatenated string of
-     *        partition values. For example, a base name of "{partitions}-table" will result in files like
-     *        "PC1=partition1/PC2=partitionA/PC1=partition1_PC2=partitionA-table.parquet", where "PC1" and "PC2" are
-     *        partitioning columns.</li>
-     *        </ul>
+     * @param destinationDir The path to destination root directory to store partitioned data in nested format.
+     *        Non-existing directories are created.
      * @param writeInstructions Write instructions for customizations while writing
+     * @param indexColumnArr Arrays containing the column names for indexes to persist. The write operation will store
+     *        the index info as sidecar tables. This argument is used to narrow the set of indexes to write, or to be
+     *        explicit about the expected set of indexes present on all sources. Indexes that are specified but missing
+     *        will be computed on demand.
      */
     public static void writeKeyValuePartitionedTable(@NotNull final Table sourceTable,
             @NotNull final TableDefinition definition,
-            @NotNull final File destinationDir,
-            @NotNull final String baseName,
-            @NotNull final ParquetInstructions writeInstructions) {
+            @NotNull final String destinationDir,
+            @NotNull final ParquetInstructions writeInstructions,
+            @Nullable final String[][] indexColumnArr) {
         final List<ColumnDefinition<?>> partitioningColumns = definition.getPartitioningColumns();
         if (partitioningColumns.isEmpty()) {
             throw new IllegalArgumentException("Table must have partitioning columns to write partitioned data");
@@ -629,155 +607,135 @@ public class ParquetTools {
         final TableDefinition leafDefinition =
                 getNonKeyTableDefinition(new HashSet<>(Arrays.asList(partitioningColNames)), definition);
         writeKeyValuePartitionedTableImpl(partitionedTable, keyTableDefinition, leafDefinition, destinationDir,
-                baseName, writeInstructions);
+                writeInstructions, indexColumnArr, Optional.of(sourceTable));
     }
 
     /**
      * Write a partitioned table to disk in parquet format with all the {@link PartitionedTable#keyColumnNames() key
      * columns} as "key=value" format in a nested directory structure. To generate the partitioned table, users can call
-     * {@link Table#partitionBy(String...) partitionBy} on the required columns. The parquet files generated will have
-     * names of the format {@code "uuid.parquet"} where "uuid" is a random UUID. To provide custom file names, use
-     * {@link #writeKeyValuePartitionedTable(PartitionedTable, File, String, ParquetInstructions)} instead.
+     * {@link Table#partitionBy(String...) partitionBy} on the required columns. The generated parquet files will have
+     * names of the format provided by {@link ParquetInstructions#baseNameForPartitionedParquetData()}.
      *
      * @param partitionedTable The partitioned table to write
-     * @param destinationDir The destination root directory to store partitioned data in nested format. Non-existing
-     *        directories are created.
+     * @param destinationDir The path to destination root directory to store partitioned data in nested format.
+     *        Non-existing directories are created.
      * @param writeInstructions Write instructions for customizations while writing
      */
     public static void writeKeyValuePartitionedTable(@NotNull final PartitionedTable partitionedTable,
-            @NotNull final File destinationDir,
+            @NotNull final String destinationDir,
             @NotNull final ParquetInstructions writeInstructions) {
-        writeKeyValuePartitionedTable(partitionedTable, destinationDir, "{uuid}", writeInstructions);
+        writeKeyValuePartitionedTable(partitionedTable, destinationDir, writeInstructions, EMPTY_INDEXES);
     }
 
     /**
      * Write a partitioned table to disk in parquet format with all the {@link PartitionedTable#keyColumnNames() key
      * columns} as "key=value" format in a nested directory structure. To generate the partitioned table, users can call
-     * {@link Table#partitionBy(String...) partitionBy} on the required columns.
+     * {@link Table#partitionBy(String...) partitionBy} on the required columns. The generated parquet files will have
+     * names of the format provided by {@link ParquetInstructions#baseNameForPartitionedParquetData()}.
      *
      * @param partitionedTable The partitioned table to write
-     * @param destinationDir The destination root directory to store partitioned data in nested format. Non-existing
-     *        directories are created.
-     * @param baseName The base name for the individual partitioned tables. For example, a base name of "table" will
-     *        result in files named "PC=partition1/table.parquet", "PC=partition2/table.parquet", etc., where "PC" is a
-     *        partitioning column. Users can also provide the following tokens to be replaced in the base name:
-     *        <ul>
-     *        <li>The token {@code {i}} will be replaced with an automatically incremented integer for files in a
-     *        directory. For example, a base name of "table-{i}" will result in files named like
-     *        "PC=partition1/table-0.parquet", "PC=partition1/table-1.parquet", etc.</li>
-     *        <li>The token {@code {uuid}} will be replaced with a random UUID. For example, a base name of
-     *        "table-{uuid}" will result in files named like
-     *        "table-8e8ab6b2-62f2-40d1-8191-1c5b70c5f330.parquet.parquet".</li>
-     *        <li>The token {@code {partitions}} will be replaced with an underscore-delimited, concatenated string of
-     *        partition values. For example, a base name of "{partitions}-table" will result in files like
-     *        "PC1=partition1/PC2=partitionA/PC1=partition1_PC2=partitionA-table.parquet", where "PC1" and "PC2" are
-     *        partitioning columns.</li>
-     *        </ul>
+     * @param destinationDir The path to destination root directory to store partitioned data in nested format.
+     *        Non-existing directories are created.
      * @param writeInstructions Write instructions for customizations while writing
+     * @param indexColumnArr Arrays containing the column names for indexes to persist. The write operation will store
+     *        the index info as sidecar tables. This argument is used to narrow the set of indexes to write, or to be
+     *        explicit about the expected set of indexes present on all sources. Indexes that are specified but missing
+     *        will be computed on demand.
      */
     public static void writeKeyValuePartitionedTable(@NotNull final PartitionedTable partitionedTable,
-            @NotNull final File destinationDir,
-            @NotNull final String baseName,
-            @NotNull final ParquetInstructions writeInstructions) {
+            @NotNull final String destinationDir,
+            @NotNull final ParquetInstructions writeInstructions,
+            @Nullable final String[][] indexColumnArr) {
         final TableDefinition keyTableDefinition = getKeyTableDefinition(partitionedTable.keyColumnNames(),
                 partitionedTable.table().getDefinition());
         final TableDefinition leafDefinition = getNonKeyTableDefinition(partitionedTable.keyColumnNames(),
                 partitionedTable.constituentDefinition());
         writeKeyValuePartitionedTableImpl(partitionedTable, keyTableDefinition, leafDefinition, destinationDir,
-                baseName, writeInstructions);
+                writeInstructions, indexColumnArr, Optional.empty());
     }
 
     /**
      * Write a partitioned table to disk in parquet format with all the {@link PartitionedTable#keyColumnNames() key
      * columns} as "key=value" format in a nested directory structure. To generate the partitioned table, users can call
-     * {@link Table#partitionBy(String...) partitionBy} on the required columns. The parquet files generated will have
-     * names of the format {@code "uuid.parquet"} where "uuid" is a random UUID. To provide custom file names, use
-     * {@link #writeKeyValuePartitionedTable(PartitionedTable, TableDefinition, File, String, ParquetInstructions)}
-     * instead.
+     * {@link Table#partitionBy(String...) partitionBy} on the required columns. The generated parquet files will have
+     * names of the format provided by {@link ParquetInstructions#baseNameForPartitionedParquetData()}.
      *
      * @param partitionedTable The partitioned table to write
      * @param definition table definition to use (instead of the one implied by the table itself)
-     * @param destinationDir The destination root directory to store partitioned data in nested format. Non-existing
-     *        directories are created.
+     * @param destinationDir The path to destination root directory to store partitioned data in nested format.
+     *        Non-existing directories are created.
      * @param writeInstructions Write instructions for customizations while writing
      */
     public static void writeKeyValuePartitionedTable(@NotNull final PartitionedTable partitionedTable,
             @NotNull final TableDefinition definition,
-            @NotNull final File destinationDir,
+            @NotNull final String destinationDir,
             @NotNull final ParquetInstructions writeInstructions) {
-        writeKeyValuePartitionedTable(partitionedTable, definition, destinationDir, "{uuid}", writeInstructions);
+        writeKeyValuePartitionedTable(partitionedTable, definition, destinationDir, writeInstructions, EMPTY_INDEXES);
     }
 
     /**
      * Write a partitioned table to disk in parquet format with all the {@link PartitionedTable#keyColumnNames() key
      * columns} as "key=value" format in a nested directory structure. To generate the partitioned table, users can call
-     * {@link Table#partitionBy(String...) partitionBy} on the required columns.
+     * {@link Table#partitionBy(String...) partitionBy} on the required columns. The generated parquet files will have
+     * names of the format provided by {@link ParquetInstructions#baseNameForPartitionedParquetData()}.
      *
      * @param partitionedTable The partitioned table to write
      * @param definition table definition to use (instead of the one implied by the table itself)
-     * @param destinationDir The destination root directory to store partitioned data in nested format. Non-existing
-     *        directories are created.
-     * @param baseName The base name for the individual partitioned tables. For example, a base name of "table" will
-     *        result in files named "PC=partition1/table.parquet", "PC=partition2/table.parquet", etc., where "PC" is a
-     *        partitioning column.Users can also provide the following tokens to be replaced in the base name:
-     *        <ul>
-     *        <li>The token {@code {i}} will be replaced with an automatically incremented integer for files in a
-     *        directory. For example, a base name of "table-{i}" will result in files named like
-     *        "PC=partition1/table-0.parquet", "PC=partition1/table-1.parquet", etc.</li>
-     *        <li>The token {@code {uuid}} will be replaced with a random UUID. For example, a base name of
-     *        "table-{uuid}" will result in files named like
-     *        "table-8e8ab6b2-62f2-40d1-8191-1c5b70c5f330.parquet.parquet".</li>
-     *        <li>The token {@code {partitions}} will be replaced with an underscore-delimited, concatenated string of
-     *        partition values. For example, a base name of "{partitions}-table" will result in files like
-     *        "PC1=partition1/PC2=partitionA/PC1=partition1_PC2=partitionA-table.parquet", where "PC1" and "PC2" are
-     *        partitioning columns.</li>
-     *        </ul>
+     * @param destinationDir The path to destination root directory to store partitioned data in nested format.
+     *        Non-existing directories are created.
      * @param writeInstructions Write instructions for customizations while writing
+     * @param indexColumnArr Arrays containing the column names for indexes to persist. The write operation will store
+     *        the index info as sidecar tables. This argument is used to narrow the set of indexes to write, or to be
+     *        explicit about the expected set of indexes present on all sources. Indexes that are specified but missing
+     *        will be computed on demand.
      */
     public static void writeKeyValuePartitionedTable(@NotNull final PartitionedTable partitionedTable,
             @NotNull final TableDefinition definition,
-            @NotNull final File destinationDir,
-            @NotNull final String baseName,
-            @NotNull final ParquetInstructions writeInstructions) {
+            @NotNull final String destinationDir,
+            @NotNull final ParquetInstructions writeInstructions,
+            @NotNull final String[][] indexColumnArr) {
         final TableDefinition keyTableDefinition = getKeyTableDefinition(partitionedTable.keyColumnNames(), definition);
         final TableDefinition leafDefinition = getNonKeyTableDefinition(partitionedTable.keyColumnNames(), definition);
         writeKeyValuePartitionedTableImpl(partitionedTable, keyTableDefinition, leafDefinition, destinationDir,
-                baseName, writeInstructions);
+                writeInstructions, indexColumnArr, Optional.empty());
     }
 
     /**
      * Write a partitioned table to disk in a key=value partitioning format with the already computed definition for the
      * key table and leaf table.
-     * <p>
-     * Check {@link #writeKeyValuePartitionedTable(PartitionedTable, File, String, ParquetInstructions)},
-     * {@link #writeKeyValuePartitionedTable(PartitionedTable, TableDefinition, File, String, ParquetInstructions)},
-     * {@link #writeKeyValuePartitionedTable(PartitionedTable, File, String, ParquetInstructions)}}, or
-     * {@link #writeKeyValuePartitionedTable(PartitionedTable, TableDefinition, File, String, ParquetInstructions)} for
-     * more details.
+     *
+     * @param partitionedTable The partitioned table to write
+     * @param keyTableDefinition The definition for key columns
+     * @param leafDefinition The definition for leaf parquet files to be written
+     * @param destinationRoot The path to destination root directory to store partitioned data in nested format
+     * @param writeInstructions Write instructions for customizations while writing
+     * @param indexColumnArr Arrays containing the column names for indexes to persist. The write operation will store
+     *        the index info as sidecar tables. This argument is used to narrow the set of indexes to write, or to be
+     *        explicit about the expected set of indexes present on all sources. Indexes that are specified but missing
+     *        will be computed on demand.
+     * @param sourceTable The optional source table, provided when user provides a merged source table to write, like in
+     *        {@link #writeKeyValuePartitionedTable(Table, String, ParquetInstructions)} and
+     *        {@link #writeKeyValuePartitionedTable(Table, TableDefinition, String, ParquetInstructions)}
      */
     private static void writeKeyValuePartitionedTableImpl(@NotNull final PartitionedTable partitionedTable,
             @NotNull final TableDefinition keyTableDefinition,
             @NotNull final TableDefinition leafDefinition,
-            @NotNull final File destinationRoot,
-            @NotNull final String baseName,
-            @NotNull final ParquetInstructions writeInstructions) {
+            @NotNull final String destinationRoot,
+            @NotNull final ParquetInstructions writeInstructions,
+            @Nullable final String[][] indexColumnArr,
+            @NotNull final Optional<Table> sourceTable) {
         if (leafDefinition.numColumns() == 0) {
             throw new IllegalArgumentException("Cannot write a partitioned parquet table without any non-partitioning "
                     + "columns");
         }
-        final boolean hasPartitionInName = baseName.contains("{partitions}");
-        final boolean hasIndexInName = baseName.contains("{i}");
-        final boolean hasUUIDInName = baseName.contains("{uuid}");
+        final String baseName = writeInstructions.baseNameForPartitionedParquetData();
+        final boolean hasPartitionInName = baseName.contains(PARTITIONS_TOKEN);
+        final boolean hasIndexInName = baseName.contains(FILE_INDEX_TOKEN);
+        final boolean hasUUIDInName = baseName.contains(UUID_TOKEN);
         if (!partitionedTable.uniqueKeys() && !hasIndexInName && !hasUUIDInName) {
             throw new IllegalArgumentException(
-                    "Cannot write a partitioned parquet table with non-unique keys without " +
-                            "{i} or {uuid} in the base name because there can be multiple partitions with the same key values");
-        }
-        if (writeInstructions.generateMetadataFiles()) {
-            if (!hasUUIDInName && !(hasIndexInName && hasPartitionInName)) {
-                throw new IllegalArgumentException("For generating metadata files, file names for generated parquet " +
-                        "files should be unique. Try passing tokens like {uuid} in the file base name");
-            }
+                    "Cannot write a partitioned parquet table with non-unique keys without {i} or {uuid} in the base " +
+                            "name because there can be multiple partitions with the same key values");
         }
         // Note that there can be multiple constituents with the same key values, so cannot directly use the
         // partitionedTable.constituentFor(keyValues) method, and we need to group them together
@@ -810,18 +768,18 @@ public class ParquetTools {
             while (constituentIterator.hasNext()) {
                 final ObjectVector<? extends Table> constituentVector = constituentIterator.next();
                 final List<String> partitionStrings = partitionStringsList.get(row);
-                final File relativePath = new File(destinationRoot, String.join("/", partitionStrings));
+                final File relativePath = new File(destinationRoot, String.join(File.separator, partitionStrings));
                 int count = 0;
                 for (final Table constituent : constituentVector) {
                     String filename = baseName;
                     if (hasPartitionInName) {
-                        filename = baseName.replace("{partitions}", String.join("_", partitionStrings));
+                        filename = baseName.replace(PARTITIONS_TOKEN, String.join("_", partitionStrings));
                     }
                     if (hasIndexInName) {
-                        filename = filename.replace("{i}", Integer.toString(count));
+                        filename = filename.replace(FILE_INDEX_TOKEN, Integer.toString(count));
                     }
                     if (hasUUIDInName) {
-                        filename = filename.replace("{uuid}", UUID.randomUUID().toString());
+                        filename = filename.replace(UUID_TOKEN, UUID.randomUUID().toString());
                     }
                     filename += PARQUET_FILE_EXTENSION;
                     destinations.add(new File(relativePath, filename));
@@ -841,16 +799,26 @@ public class ParquetTools {
             partitioningColumnsSchema = null;
         }
         final Map<String, Map<ParquetCacheTags, Object>> computedCache =
-                buildComputedCache(partitionedTable::merge, leafDefinition);
-        ParquetTools.writeParquetTablesImpl(
-                partitionedData.toArray(Table[]::new),
-                leafDefinition,
-                writeInstructions,
-                destinations.toArray(File[]::new),
-                leafDefinition.getGroupingColumnNamesArray(),
-                partitioningColumnsSchema,
-                destinationRoot,
-                computedCache);
+                buildComputedCache(() -> sourceTable.orElseGet(partitionedTable::merge), leafDefinition);
+        final Table[] partitionedDataArray = partitionedData.toArray(Table[]::new);
+        try (final SafeCloseable ignored = LivenessScopeStack.open()) {
+            // TODO(deephaven-core#5292): Optimize creating index on constituent tables
+            addIndexesToTables(partitionedDataArray, indexColumnArr);
+            writeParquetTablesImpl(partitionedDataArray, leafDefinition, writeInstructions,
+                    destinations.toArray(File[]::new), indexColumnArr, partitioningColumnsSchema,
+                    new File(destinationRoot), computedCache);
+        }
+    }
+
+    private static void addIndexesToTables(@NotNull final Table[] tables,
+            @Nullable final String[][] indexColumnArr) {
+        if (indexColumnArr != null && indexColumnArr.length != 0) {
+            for (final Table table : tables) {
+                for (final String[] indexCols : indexColumnArr) {
+                    DataIndexer.getOrCreateDataIndex(table, indexCols);
+                }
+            }
+        }
     }
 
     /**
@@ -907,44 +875,30 @@ public class ParquetTools {
     }
 
     /**
-     * Writes tables to disk in parquet format to a supplied set of destinations. If you specify grouping columns, there
-     * must already be grouping information for those columns in the sources. This can be accomplished with
-     * {@code .groupBy(<grouping columns>).ungroup()} or {@code .sort(<grouping column>)}.
-=======
      * Writes tables to disk in parquet format to a supplied set of destinations.
->>>>>>> main
      *
      * @param sources The tables to write
      * @param definition The common definition for all the tables to write
      * @param writeInstructions Write instructions for customizations while writing
-<<<<<<< HEAD
      * @param destinations The destination paths. Any non-existing directories in the paths provided are created. If
      *        there is an error, any intermediate directories previously created are removed; note this makes this
-     *        method unsafe for concurrent use
-     * @param groupingColumns List of columns the tables are grouped by (the write operation will store the grouping
-     *        info)
-=======
-     * @param destinations The destinations paths. Any non-existing directories in the paths provided are created. If
-     *        there is an error any intermediate directories previously created are removed; note this makes this method
-     *        unsafe for concurrent use.
+     *        method unsafe for concurrent use.
      * @param indexColumnArr Arrays containing the column names for indexes to persist. The write operation will store
      *        the index info as sidecar tables. This argument is used to narrow the set of indexes to write, or to be
      *        explicit about the expected set of indexes present on all sources. Indexes that are specified but missing
      *        will be computed on demand.
->>>>>>> main
      */
     public static void writeParquetTables(
             @NotNull final Table[] sources,
             @NotNull final TableDefinition definition,
             @NotNull final ParquetInstructions writeInstructions,
             @NotNull final File[] destinations,
-<<<<<<< HEAD
-            @Nullable final String[] groupingColumns) {
+            @Nullable final String[][] indexColumnArr) {
         final File metadataRootDir;
         if (writeInstructions.generateMetadataFiles()) {
             // We insist on writing the metadata file in the same directory as the destination files, thus all
-            // destination files should be in the same directory. This also ensures that the file names would be unique.
-            final String firstDestinationDir = destinations[0].getParentFile().getAbsolutePath();
+            // destination files should be in the same directory.
+            final String firstDestinationDir = destinations[0].getAbsoluteFile().getParentFile().getAbsolutePath();
             for (int i = 1; i < destinations.length; i++) {
                 if (!firstDestinationDir.equals(destinations[i].getParentFile().getAbsolutePath())) {
                     throw new IllegalArgumentException("All destination files must be in the same directory for " +
@@ -958,27 +912,24 @@ public class ParquetTools {
 
         final Map<String, Map<ParquetCacheTags, Object>> computedCache =
                 buildComputedCache(() -> PartitionedTableFactory.ofTables(definition, sources).merge(), definition);
-        // We do not have any additional common schema here. Schema for all columns will be generated at the time of
-        // writing the parquet files and merged to generate the metadata files.
-        writeParquetTablesImpl(sources, definition, writeInstructions, destinations, groupingColumns,
+        // We do not have any additional schema for partitioning columns in this case. Schema for all columns will be
+        // generated at the time of writing the parquet files and merged to generate the metadata files.
+        writeParquetTablesImpl(sources, definition, writeInstructions, destinations, indexColumnArr,
                 null, metadataRootDir, computedCache);
     }
 
     /**
-     * Refer to {@link #writeParquetTables(Table[], TableDefinition, ParquetInstructions, File[], String[])} for more
+     * Refer to {@link #writeParquetTables(Table[], TableDefinition, ParquetInstructions, File[], String[][])} for more
      * details.
      */
     private static void writeParquetTablesImpl(@NotNull final Table[] sources,
             @NotNull final TableDefinition definition,
             @NotNull final ParquetInstructions writeInstructions,
             @NotNull final File[] destinations,
-            @Nullable final String[] groupingColumns,
+            @Nullable final String[][] indexColumnArr,
             @Nullable final MessageType partitioningColumnsSchema,
             @Nullable final File metadataRootDir,
             @NotNull final Map<String, Map<ParquetCacheTags, Object>> computedCache) {
-=======
-            @Nullable final String[][] indexColumnArr) {
->>>>>>> main
         Require.eq(sources.length, "sources.length", destinations.length, "destinations.length");
         if (definition.numColumns() == 0) {
             throw new TableDataException("Cannot write a parquet table with zero columns");
@@ -1008,28 +959,17 @@ public class ParquetTools {
         // List of all destination files (including index files), to roll back in case of exceptions
         final List<File> destFiles = new ArrayList<>();
         try {
-<<<<<<< HEAD
-            final List<Map<String, ParquetTableWriter.GroupingColumnWritingInfo>> groupingColumnWritingInfoMaps;
-            if (groupingColumns == null || groupingColumns.length == 0) {
-                // Write the tables without any grouping info
-                groupingColumnWritingInfoMaps = null;
-=======
             final List<List<ParquetTableWriter.IndexWritingInfo>> indexInfoLists;
             if (indexColumnArr == null || indexColumnArr.length == 0) {
                 // Write the tables without any index info
                 indexInfoLists = null;
->>>>>>> main
                 for (int tableIdx = 0; tableIdx < sources.length; tableIdx++) {
                     shadowFiles.add(shadowDestFiles[tableIdx]);
                     final Table source = sources[tableIdx];
                     ParquetTableWriter.write(source, definition, writeInstructions, shadowDestFiles[tableIdx].getPath(),
-<<<<<<< HEAD
                             destinations[tableIdx].getPath(), Collections.emptyMap(),
-                            (Map<String, ParquetTableWriter.GroupingColumnWritingInfo>) null, metadataFileWriter,
+                            (List<ParquetTableWriter.IndexWritingInfo>) null, metadataFileWriter,
                             computedCache);
-=======
-                            Collections.emptyMap(), (List<ParquetTableWriter.IndexWritingInfo>) null);
->>>>>>> main
                 }
             } else {
                 // Create index info for each table and write the table and index files to shadow path
@@ -1053,12 +993,8 @@ public class ParquetTools {
 
                     final Table sourceTable = sources[tableIdx];
                     ParquetTableWriter.write(sourceTable, definition, writeInstructions,
-<<<<<<< HEAD
                             shadowDestFiles[tableIdx].getPath(), tableDestination.getPath(), Collections.emptyMap(),
-                            groupingColumnWritingInfoMap, metadataFileWriter, computedCache);
-=======
-                            shadowDestFiles[tableIdx].getPath(), Collections.emptyMap(), indexInfoList);
->>>>>>> main
+                            indexInfoList, metadataFileWriter, computedCache);
                 }
             }
 
@@ -1081,20 +1017,11 @@ public class ParquetTools {
             for (int tableIdx = 0; tableIdx < sources.length; tableIdx++) {
                 destFiles.add(destinations[tableIdx]);
                 installShadowFile(destinations[tableIdx], shadowDestFiles[tableIdx]);
-<<<<<<< HEAD
-                if (groupingColumnWritingInfoMaps != null) {
-                    final Map<String, ParquetTableWriter.GroupingColumnWritingInfo> gcwim =
-                            groupingColumnWritingInfoMaps.get(tableIdx);
-                    for (final ParquetTableWriter.GroupingColumnWritingInfo gfwi : gcwim.values()) {
-                        final File indexDestFile = gfwi.destFileForMetadata;
-                        final File shadowIndexFile = gfwi.destFile;
-=======
                 if (indexInfoLists != null) {
                     final List<ParquetTableWriter.IndexWritingInfo> indexInfoList = indexInfoLists.get(tableIdx);
                     for (final ParquetTableWriter.IndexWritingInfo info : indexInfoList) {
-                        final File indexDestFile = info.metadataFilePath;
+                        final File indexDestFile = info.destFileForMetadata;
                         final File shadowIndexFile = info.destFile;
->>>>>>> main
                         destFiles.add(indexDestFile);
                         installShadowFile(indexDestFile, shadowIndexFile);
                     }
@@ -1135,22 +1062,32 @@ public class ParquetTools {
      * @implNote This only examines the first source table. The writing code will compute missing indexes for the other
      *           source tables.
      */
-    private static String[][] indexedColumnNames(@NotNull Table @NotNull [] sources) {
+    @NotNull
+    private static String[][] indexedColumnNames(@NotNull final Table @NotNull [] sources) {
         if (sources.length == 0) {
-            return new String[0][];
+            return EMPTY_INDEXES;
         }
-
         // Use the first table as the source of indexed columns
-        final Table firstTable = sources[0];
-        final DataIndexer dataIndexer = DataIndexer.existingOf(firstTable.getRowSet());
+        return indexedColumnNames(sources[0]);
+    }
+
+    /**
+     * Examine the source table to retrieve the list of indexes as String[] arrays.
+     *
+     * @param source The table from which to retrieve the indexes
+     * @return An array containing the indexes as String[] arrays.
+     */
+    @NotNull
+    private static String[][] indexedColumnNames(@NotNull final Table source) {
+        final DataIndexer dataIndexer = DataIndexer.existingOf(source.getRowSet());
         if (dataIndexer == null) {
-            return new String[0][];
+            return EMPTY_INDEXES;
         }
         final List<DataIndex> dataIndexes = dataIndexer.dataIndexes(true);
         if (dataIndexes.isEmpty()) {
-            return new String[0][];
+            return EMPTY_INDEXES;
         }
-        final Map<String, ? extends ColumnSource<?>> nameToColumn = firstTable.getColumnSourceMap();
+        final Map<String, ? extends ColumnSource<?>> nameToColumn = source.getColumnSourceMap();
         // We disregard collisions, here; any mapped name is an adequate choice.
         final Map<ColumnSource<?>, String> columnToName = nameToColumn.entrySet().stream()
                 .collect(Collectors.toMap(Map.Entry::getValue, Map.Entry::getKey));
