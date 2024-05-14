@@ -6,7 +6,7 @@ plugins {
 description = 'An extension integrating Arrow sources with Deephaven\'s Table Model'
 
 dependencies {
-    api project(':engine-table')
+    implementation project(':engine-table')
 
     implementation project(':Configuration')
     implementation depCommonsLang3
