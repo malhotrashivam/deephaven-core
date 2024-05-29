@@ -107,6 +107,23 @@ final class S3ChannelContext extends BaseSeekableChannelContext implements Seeka
         return size;
     }
 
+    void prefetch(final long position, final long size) throws IOException {
+        ensureSize();
+        if (size == 0) {
+            return;
+        }
+        final long firstFragmentIdx = fragmentIndex(position);
+        final long lastFragmentIdx = fragmentIndex(position + size - 1);
+
+        for (long fragmentIdx = firstFragmentIdx; fragmentIdx <= lastFragmentIdx; ++fragmentIdx) {
+            if (log.isDebugEnabled()) {
+                log.debug().append("Prefetching fragment ix=" + fragmentIdx + " for " + uri.uri()).append(ctxStr())
+                        .endl();
+            }
+            sharedCache.getOrCreateRequest(uri, fragmentIdx, this).request.sendRequest();
+        }
+    }
+
     int fill(final long position, final ByteBuffer dest) throws IOException {
         final int destRemaining = dest.remaining();
         if (destRemaining == 0) {

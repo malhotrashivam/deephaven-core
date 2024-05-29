@@ -14,6 +14,7 @@ import io.deephaven.parquet.base.ColumnChunkReader;
 import io.deephaven.parquet.base.ColumnPageReader;
 import io.deephaven.util.channel.SeekableChannelContext;
 import io.deephaven.util.channel.SeekableChannelContext.ContextHolder;
+import io.deephaven.util.channel.SeekableChannelsProvider;
 import org.apache.parquet.internal.column.columnindex.OffsetIndex;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -21,7 +22,13 @@ import org.jetbrains.annotations.Nullable;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.lang.ref.WeakReference;
+import java.net.URI;
 import java.util.Arrays;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
 /**
@@ -30,6 +37,51 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
 final class OffsetIndexBasedColumnChunkPageStore<ATTR extends Any> extends ColumnChunkPageStore<ATTR> {
     private static final long PAGE_SIZE_NOT_FIXED = -1;
     private static final int NUM_PAGES_NOT_INITIALIZED = -1;
+
+    static class PrefetchTask {
+        private final SeekableChannelsProvider provider;
+        private final URI uri;
+        private final long offset;
+        private final long length;
+
+
+        PrefetchTask(final SeekableChannelsProvider provider, final URI uri, final long offset, final long length) {
+            this.provider = provider;
+            this.uri = uri;
+            this.offset = offset;
+            this.length = length;
+        }
+    }
+
+    private static final BlockingQueue<PrefetchTask> prefetchQueue = new LinkedBlockingQueue<>();
+    private static final ExecutorService executorService;
+
+    static class Prefetcher implements Runnable {
+        private final BlockingQueue<PrefetchTask> prefetchQueue;
+
+        Prefetcher(final BlockingQueue<PrefetchTask> prefetchQueue) {
+            this.prefetchQueue = prefetchQueue;
+        }
+
+        @Override
+        public final void run() {
+            while (true) {
+                try {
+                    final PrefetchTask task = prefetchQueue.take();
+                    task.provider.prefetch(task.uri, task.offset, task.length);
+                } catch (final InterruptedException e) {
+                    throw new UncheckedDeephavenException(e);
+                }
+            }
+        }
+    }
+
+    static {
+        executorService = Executors.newSingleThreadExecutor(r -> new Thread(r, "PrefetcherThread"));
+        executorService.submit(new Prefetcher(prefetchQueue));
+    }
+
+    private final AtomicBoolean isPrefetched = new AtomicBoolean(false);
 
     private static final class PageState<ATTR extends Any> {
         private volatile WeakReference<PageCache.IntrusivePage<ATTR>> pageRef;
@@ -176,6 +228,11 @@ final class OffsetIndexBasedColumnChunkPageStore<ATTR extends Any> extends Colum
     private ChunkPage<ATTR> getPageContainingImpl(@Nullable final FillContext fillContext, long rowKey) {
         rowKey &= mask();
         Require.inRange(rowKey, "rowKey", numRows(), "numRows");
+
+        if (isPrefetched.compareAndSet(false, true)) {
+            prefetchQueue.add(new PrefetchTask(columnChunkReader.getChannelsProvider(), columnChunkReader.getURI(),
+                    offsetIndex.getOffset(0), columnChunkReader.getColumnChunk().getMeta_data().total_compressed_size));
+        }
 
         int pageNum;
         if (fixedPageSize == PAGE_SIZE_NOT_FIXED) {

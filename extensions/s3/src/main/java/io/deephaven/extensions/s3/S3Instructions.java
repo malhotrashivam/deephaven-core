@@ -157,6 +157,12 @@ public abstract class S3Instructions implements LogOutputAppendable {
                 .withMaxCacheSize(readAheadCount + 1);
     }
 
+    @Lazy
+    S3Instructions prefetchInstructions() {
+        return withReadAheadCount(0)
+                .withMaxCacheSize(1);
+    }
+
     @Check
     final void boundsCheckMaxConcurrentRequests() {
         if (maxConcurrentRequests() < 1) {

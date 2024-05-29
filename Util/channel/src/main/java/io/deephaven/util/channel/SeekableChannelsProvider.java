@@ -110,4 +110,8 @@ public interface SeekableChannelsProvider extends SafeCloseable {
      * @return The {@link Stream} of {@link URI}s
      */
     Stream<URI> walk(@NotNull URI directory) throws IOException;
+
+    default void prefetch(@NotNull final URI uri, final long offset, final long length) {
+        // no-op
+    }
 }

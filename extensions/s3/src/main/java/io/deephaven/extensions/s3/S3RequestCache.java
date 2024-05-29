@@ -65,6 +65,10 @@ final class S3RequestCache {
             if (existingRequest != null) {
                 final S3Request.AcquiredRequest acquired = existingRequest.tryAcquire();
                 if (acquired != null) {
+                    if (log.isDebugEnabled()) {
+                        log.debug().append("Found existing request from cache: ").append(String.format("ctx=%d ",
+                                System.identityHashCode(context))).append(acquired.request.requestStr()).endl();
+                    }
                     return acquired;
                 } else {
                     remove(existingRequest);

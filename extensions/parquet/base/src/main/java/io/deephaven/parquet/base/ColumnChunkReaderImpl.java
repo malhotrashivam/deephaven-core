@@ -130,6 +130,11 @@ final class ColumnChunkReaderImpl implements ColumnChunkReader {
     }
 
     @Override
+    public ColumnChunk getColumnChunk() {
+        return columnChunk;
+    }
+
+    @Override
     public ColumnPageReaderIterator getPageIterator() {
         return new ColumnPageReaderIteratorImpl();
     }

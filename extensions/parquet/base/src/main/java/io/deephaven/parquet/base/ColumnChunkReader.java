@@ -6,6 +6,7 @@ package io.deephaven.parquet.base;
 import io.deephaven.util.channel.SeekableChannelContext;
 import io.deephaven.util.channel.SeekableChannelsProvider;
 import org.apache.parquet.column.Dictionary;
+import org.apache.parquet.format.ColumnChunk;
 import org.apache.parquet.internal.column.columnindex.OffsetIndex;
 import org.apache.parquet.schema.PrimitiveType;
 import org.jetbrains.annotations.Nullable;
@@ -52,6 +53,8 @@ public interface ColumnChunkReader {
      * @throws UnsupportedOperationException If the column chunk does not have an offset index.
      */
     OffsetIndex getOffsetIndex(final SeekableChannelContext context);
+
+    ColumnChunk getColumnChunk();
 
     /**
      * Used to iterate over column page readers for each page with the capability to set channel context to for reading

@@ -128,6 +128,11 @@ public class CachedChannelProvider implements SeekableChannelsProvider {
         return wrappedProvider.walk(directory);
     }
 
+    @Override
+    public void prefetch(@NotNull final URI uri, final long offset, final long length) {
+        wrappedProvider.prefetch(uri, offset, length);
+    }
+
     @Nullable
     private synchronized CachedChannel tryGetPooledChannel(@NotNull final String pathKey,
             @NotNull final KeyedObjectHashMap<String, PerPathPool> channelPool) {

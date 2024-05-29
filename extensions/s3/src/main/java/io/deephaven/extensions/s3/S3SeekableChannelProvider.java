@@ -130,6 +130,21 @@ final class S3SeekableChannelProvider implements SeekableChannelsProvider {
         return createStream(directory, true);
     }
 
+    @Override
+    public void prefetch(@NotNull final URI uri, final long offset, final long length) {
+        try (final S3ChannelContext context =
+                new S3ChannelContext(this, s3AsyncClient, s3Instructions.prefetchInstructions(), sharedCache)) {
+            context.setURI(s3AsyncClient.utilities().parseUri(uri));
+            final Map<URI, FileSizeInfo> fileSizeCache = fileSizeCacheRef.get();
+            if (fileSizeCache != null && fileSizeCache.containsKey(uri)) {
+                context.verifyOrSetSize(fileSizeCache.get(uri).size);
+            }
+            context.prefetch(offset, length);
+        } catch (final IOException e) {
+            throw new UncheckedDeephavenException("Failed to prefetch data for URI: " + uri, e);
+        }
+    }
+
     private Stream<URI> createStream(@NotNull final URI directory, final boolean isRecursive) {
         // The following iterator fetches URIs from S3 in batches and creates a stream
         final Iterator<URI> iterator = new Iterator<>() {
