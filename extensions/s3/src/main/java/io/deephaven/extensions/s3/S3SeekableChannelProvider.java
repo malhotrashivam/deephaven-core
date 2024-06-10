@@ -19,6 +19,7 @@ import software.amazon.awssdk.services.s3.S3Uri;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 
+import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.ref.SoftReference;
@@ -92,6 +93,12 @@ final class S3SeekableChannelProvider implements SeekableChannelsProvider {
     public InputStream getInputStream(final SeekableByteChannel channel) {
         // S3SeekableByteChannel is internally buffered, no need to re-buffer
         return Channels.newInputStreamNoClose(channel);
+    }
+
+    @Override
+    public InputStream getInputStream(SeekableByteChannel channel, int sizeLimit) {
+        // TrackedSeekableByteChannel is not buffered, need to buffer
+        return new BufferedInputStream(Channels.newInputStreamNoClose(channel), sizeLimit);
     }
 
     @Override

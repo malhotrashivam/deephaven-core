@@ -81,6 +81,10 @@ public interface SeekableChannelsProvider extends SafeCloseable {
      */
     InputStream getInputStream(SeekableByteChannel channel) throws IOException;
 
+    default InputStream getInputStream(SeekableByteChannel channel, int sizeLimit) throws IOException {
+        return getInputStream(channel);
+    }
+
     default SeekableByteChannel getWriteChannel(@NotNull final String path, final boolean append) throws IOException {
         return getWriteChannel(Paths.get(path), append);
     }
