@@ -29,7 +29,8 @@ public interface PageMaterializer {
         return BigDecimal.class;
     }
 
-    static PageMaterializerFactory factoryForType(@NotNull final PrimitiveType primitiveType) {
+    static PageMaterializerFactory factoryForType(@NotNull final PrimitiveType primitiveType,
+            final boolean useCodec) {
         final PrimitiveType.PrimitiveTypeName primitiveTypeName = primitiveType.getPrimitiveTypeName();
         final LogicalTypeAnnotation logicalTypeAnnotation = primitiveType.getLogicalTypeAnnotation();
         switch (primitiveTypeName) {
@@ -129,7 +130,7 @@ public interface PageMaterializer {
                     return StringMaterializer.Factory;
                 }
             case FIXED_LEN_BYTE_ARRAY: // fall through
-                if (logicalTypeAnnotation instanceof LogicalTypeAnnotation.DecimalLogicalTypeAnnotation) {
+                if (!useCodec && logicalTypeAnnotation instanceof LogicalTypeAnnotation.DecimalLogicalTypeAnnotation) {
                     final LogicalTypeAnnotation.DecimalLogicalTypeAnnotation decimalLogicalType =
                             (LogicalTypeAnnotation.DecimalLogicalTypeAnnotation) logicalTypeAnnotation;
                     final int encodedSizeInBytes = primitiveTypeName == BINARY ? -1 : primitiveType.getTypeLength();

@@ -67,7 +67,8 @@ final class ColumnChunkReaderImpl implements ColumnChunkReader {
             final MessageType type,
             final List<Type> fieldTypes,
             final long numRows,
-            final String version) {
+            final String version,
+            final boolean useCodec) {
         this.columnName = columnName;
         this.channelsProvider = channelsProvider;
         this.columnChunk = columnChunk;
@@ -81,7 +82,7 @@ final class ColumnChunkReaderImpl implements ColumnChunkReader {
         }
         this.fieldTypes = fieldTypes;
         this.dictionarySupplier = new SoftCachingFunction<>(this::getDictionary);
-        this.pageMaterializerFactory = PageMaterializer.factoryForType(path.getPrimitiveType());
+        this.pageMaterializerFactory = PageMaterializer.factoryForType(path.getPrimitiveType(), useCodec);
         this.numRows = numRows;
         this.version = version;
         if (columnChunk.isSetFile_path() && FILE_URI_SCHEME.equals(rootURI.getScheme())) {

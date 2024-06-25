@@ -18,10 +18,11 @@ public interface RowGroupReader {
      *
      * @param columnName the name of the column
      * @param path the full column path
+     * @param useCodec whether a codec is required to read the column
      * @return the accessor to a given Column Chunk, or null if the column is not present in this Row Group
      */
     @Nullable
-    ColumnChunkReader getColumnChunk(@NotNull String columnName, @NotNull List<String> path);
+    ColumnChunkReader getColumnChunk(@NotNull String columnName, @NotNull List<String> path, @NotNull boolean useCodec);
 
     long numRows();
 
