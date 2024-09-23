@@ -10,7 +10,7 @@ enum AnonymousCredentials implements AwsSdkV2Credentials {
     ANONYMOUS_CREDENTIALS;
 
     @Override
-    public AwsCredentialsProvider awsV2CredentialsProvider() {
+    public AwsCredentialsProvider awsV2CredentialsProvider(final S3Instructions instructions) {
         return AnonymousCredentialsProvider.create();
     }
 }

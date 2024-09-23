@@ -3,9 +3,14 @@
 //
 package io.deephaven.extensions.s3;
 
+import io.deephaven.util.annotations.InternalUseOnly;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 
+@InternalUseOnly
 interface AwsSdkV2Credentials extends Credentials {
 
-    AwsCredentialsProvider awsV2CredentialsProvider();
+    /**
+     * Create an AWS SDK v2 credentials provider using the provided instructions.
+     */
+    AwsCredentialsProvider awsV2CredentialsProvider(S3Instructions instructions);
 }

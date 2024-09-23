@@ -29,7 +29,7 @@ abstract class BasicCredentials implements AwsSdkV2Credentials {
     abstract String secretAccessKey();
 
     @Override
-    public final AwsCredentialsProvider awsV2CredentialsProvider() {
+    public final AwsCredentialsProvider awsV2CredentialsProvider(final S3Instructions instructions) {
         return StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKeyId(), secretAccessKey()));
     }
 }

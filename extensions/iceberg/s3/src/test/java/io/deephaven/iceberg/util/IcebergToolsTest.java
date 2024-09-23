@@ -10,13 +10,20 @@ import io.deephaven.engine.table.Table;
 import io.deephaven.engine.table.TableDefinition;
 import io.deephaven.engine.table.impl.locations.TableDataException;
 import io.deephaven.engine.testutil.junit4.EngineCleanup;
+import io.deephaven.extensions.s3.AssumeRoleCredentials;
+import io.deephaven.extensions.s3.Credentials;
 import io.deephaven.extensions.s3.S3Instructions;
 import io.deephaven.iceberg.TestCatalog.IcebergTestCatalog;
 import io.deephaven.test.types.OutOfBandTest;
+import org.apache.iceberg.CatalogProperties;
+import org.apache.iceberg.CatalogUtil;
+import org.apache.iceberg.Schema;
 import org.apache.iceberg.Snapshot;
+import org.apache.iceberg.aws.glue.GlueCatalog;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.types.Types;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
@@ -42,6 +49,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
+import static io.deephaven.engine.testutil.TstUtils.assertTableEquals;
+import static io.deephaven.engine.util.TableTools.intCol;
+import static io.deephaven.engine.util.TableTools.newTable;
+import static io.deephaven.engine.util.TableTools.stringCol;
 import static io.deephaven.iceberg.util.IcebergCatalogAdapter.NAMESPACE_DEFINITION;
 import static io.deephaven.iceberg.util.IcebergCatalogAdapter.SNAPSHOT_DEFINITION;
 import static io.deephaven.iceberg.util.IcebergCatalogAdapter.TABLES_DEFINITION;
@@ -894,5 +905,50 @@ public abstract class IcebergToolsTest {
         // Use string and current snapshot
         tableDef = adapter.getTableDefinition("sales.sales_multi", localInstructions);
         Assert.equals(tableDef, "tableDef", userTableDef);
+    }
+
+    @Test
+    public void testCatalogCreation() {
+        // Configure catalog properties
+        final Map<String, String> properties = new HashMap<>();
+        properties.put(CatalogProperties.WAREHOUSE_LOCATION, "s3://dh-shivam-iceberg-warehouse/");
+        properties.put(CatalogProperties.CATALOG_IMPL, GlueCatalog.class.getName());
+        properties.put(CatalogProperties.URI, "https://glue.amazonaws.com");
+
+        // Create and return the Glue catalog
+        final GlueCatalog catalog = (GlueCatalog) CatalogUtil.buildIcebergCatalog("glue", properties, null);
+
+        // Add a table to the catalog
+        final Schema schema = new Schema(
+                Types.NestedField.required(1, "id", Types.IntegerType.get()),
+                Types.NestedField.required(2, "name", Types.StringType.get()));
+
+        final Namespace namespace = Namespace.of("mynamespace");
+        if (!catalog.namespaceExists(namespace)) {
+            catalog.createNamespace(namespace);
+        }
+        final TableIdentifier tableIdentifier = TableIdentifier.of(namespace, "mytable");
+        catalog.createTable(tableIdentifier, schema);
+    }
+
+    @Test
+    public void readDataFromNewCatalog() {
+        final IcebergCatalogAdapter adapter = IcebergToolsS3.createGlue(
+                "glue", "https://glue.amazonaws.com", "s3://dh-shivam-iceberg-warehouse/");
+        final S3Instructions s3Instructions = S3Instructions.builder()
+                .regionName("us-east-2")
+                .credentials(AssumeRoleCredentials.builder()
+                        .roleArn("arn:aws:iam::942773209161:role/dh-shivam-iceberg-test-role")
+                        .build())
+                .build();
+        final IcebergInstructions icebergInstructions = IcebergInstructions.builder()
+                .dataInstructions(s3Instructions)
+                .build();
+        final Table fromIceberg = adapter.readTable("mynamespace.mytable", icebergInstructions);
+        final Table expected = newTable(
+            intCol("id", 55, 76, 20, 130, 230, 50, 73, 137, 214),
+            stringCol("name", "A", "B", "A", "C", "B", "A", "B", "B", "C")
+        );
+        assertTableEquals(expected, fromIceberg);
     }
 }

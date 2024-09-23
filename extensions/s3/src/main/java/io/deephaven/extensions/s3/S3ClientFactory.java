@@ -13,9 +13,11 @@ import software.amazon.awssdk.http.SdkHttpClient;
 import software.amazon.awssdk.http.async.SdkAsyncHttpClient;
 import software.amazon.awssdk.http.crt.AwsCrtAsyncHttpClient;
 import software.amazon.awssdk.http.crt.AwsCrtHttpClient;
-import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.S3AsyncClientBuilder;
+import software.amazon.awssdk.services.sts.StsClient;
+import software.amazon.awssdk.services.sts.auth.StsAssumeRoleCredentialsProvider;
+import software.amazon.awssdk.services.sts.model.AssumeRoleRequest;
 import software.amazon.awssdk.utils.ThreadFactoryBuilder;
 
 import java.time.Duration;
@@ -27,15 +29,17 @@ import java.util.concurrent.ScheduledExecutorService;
 
 import static io.deephaven.util.thread.ThreadHelpers.getOrComputeThreadCountProperty;
 
-class S3AsyncClientFactory {
+class S3ClientFactory {
 
     private static final int NUM_FUTURE_COMPLETION_THREADS =
             getOrComputeThreadCountProperty("S3.numFutureCompletionThreads", -1);
     private static final int NUM_SCHEDULED_EXECUTOR_THREADS =
             getOrComputeThreadCountProperty("S3.numScheduledExecutorThreads", 5);
 
-    private static final Logger log = LoggerFactory.getLogger(S3AsyncClientFactory.class);
+    private static final Logger log = LoggerFactory.getLogger(S3ClientFactory.class);
     private static final Map<HttpClientConfig, SdkAsyncHttpClient> httpAsyncClientCache = new ConcurrentHashMap<>();
+    private static final Map<HttpClientConfig, SdkHttpClient> httpClientCache = new ConcurrentHashMap();
+    private static final Map<HttpClientConfig, StsClient> stsClientCache = new ConcurrentHashMap<>();
 
     private static volatile Executor futureCompletionExecutor;
     private static volatile ScheduledExecutorService scheduledExecutor;
@@ -56,10 +60,30 @@ class S3AsyncClientFactory {
                         // Adding a metrics publisher may be useful for debugging, but it's very verbose.
                         // .addMetricPublisher(LoggingMetricPublisher.create(Level.INFO, Format.PRETTY))
                         .scheduledExecutorService(ensureScheduledExecutor())
-                        .build())
-                .credentialsProvider(instructions.awsV2CredentialsProvider());
-        instructions.regionName().map(Region::of).ifPresent(builder::region);
+                        .build());
         instructions.endpointOverride().ifPresent(builder::endpointOverride);
+
+        if (instructions.credentials() instanceof AssumeRoleCredentials) {
+            final AssumeRoleCredentials assumeRoleCredentials =
+                    (AssumeRoleCredentials) instructions.credentials();
+            final AssumeRoleRequest.Builder assumeRoleRequestBuilder = AssumeRoleRequest.builder()
+                    .roleArn(assumeRoleCredentials.roleArn());
+            // TODO What is the right way to do this cast of long -> int
+            assumeRoleCredentials.roleSessionDuration()
+                    .ifPresent(duration -> assumeRoleRequestBuilder.durationSeconds((int) duration.getSeconds()));
+            assumeRoleCredentials.roleSessionName().ifPresent(assumeRoleRequestBuilder::roleSessionName);
+            assumeRoleCredentials.externalId().ifPresent(assumeRoleRequestBuilder::externalId);
+            final AssumeRoleRequest assumeRoleRequest = assumeRoleRequestBuilder.build();
+
+            // TODO Make sure this provider is closed
+            builder.credentialsProvider(StsAssumeRoleCredentialsProvider.builder()
+                    .stsClient(getOrBuildStsClient(instructions))
+                    .refreshRequest(assumeRoleRequest)
+                    .asyncCredentialUpdateEnabled(true)
+                    .build());
+        } else {
+            builder.credentialsProvider(instructions.awsV2CredentialsProvider());
+        }
         final S3AsyncClient s3AsyncClient = builder.build();
         if (log.isDebugEnabled()) {
             log.debug().append("Building S3AsyncClient with instructions: ").append(instructions).endl();
@@ -114,6 +138,21 @@ class S3AsyncClientFactory {
                 .build());
     }
 
+    static StsClient getOrBuildStsClient(@NotNull final S3Instructions instructions) {
+        final HttpClientConfig config = new HttpClientConfig(instructions.maxConcurrentRequests(),
+                instructions.connectionTimeout());
+        return stsClientCache.computeIfAbsent(config, key -> StsClient.builder()
+                .httpClient(getOrBuildHttpClient(config))
+                .build());
+    }
+
+    private static SdkHttpClient getOrBuildHttpClient(@NotNull final HttpClientConfig httpClientConfig) {
+        return httpClientCache.computeIfAbsent(httpClientConfig, key -> AwsCrtHttpClient.builder()
+                .maxConcurrency(httpClientConfig.maxConcurrentRequests())
+                .connectionTimeout(httpClientConfig.connectionTimeout())
+                .build());
+    }
+
     /**
      * The following executor will be used to complete the futures returned by the async client. This is a shared
      * executor across all clients with fixed number of threads. This pattern is inspired by the default executor used
@@ -123,7 +162,7 @@ class S3AsyncClientFactory {
      */
     private static Executor ensureAsyncFutureCompletionExecutor() {
         if (futureCompletionExecutor == null) {
-            synchronized (S3AsyncClientFactory.class) {
+            synchronized (S3ClientFactory.class) {
                 if (futureCompletionExecutor == null) {
                     futureCompletionExecutor = Executors.newFixedThreadPool(NUM_FUTURE_COMPLETION_THREADS,
                             new ThreadFactoryBuilder().threadNamePrefix("s3-async-future-completion").build());
@@ -141,7 +180,7 @@ class S3AsyncClientFactory {
      */
     private static ScheduledExecutorService ensureScheduledExecutor() {
         if (scheduledExecutor == null) {
-            synchronized (S3AsyncClientFactory.class) {
+            synchronized (S3ClientFactory.class) {
                 if (scheduledExecutor == null) {
                     scheduledExecutor = Executors.newScheduledThreadPool(NUM_SCHEDULED_EXECUTOR_THREADS,
                             new ThreadFactoryBuilder().threadNamePrefix("s3-scheduled-executor").build());
