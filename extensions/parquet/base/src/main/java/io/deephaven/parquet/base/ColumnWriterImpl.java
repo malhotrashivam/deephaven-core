@@ -67,6 +67,8 @@ final class ColumnWriterImpl implements ColumnWriter {
 
     private final EncodingStats.Builder encodingStatsBuilder = new EncodingStats.Builder();
 
+    private static int counter = 0;
+
     ColumnWriterImpl(
             final RowGroupWriterImpl owner,
             final CountingOutputStream countingOutput,
@@ -88,6 +90,12 @@ final class ColumnWriterImpl implements ColumnWriter {
         this.owner = owner;
         offsetIndexBuilder = OffsetIndexBuilder.getBuilder();
         statistics = Statistics.createStats(column.getPrimitiveType());
+        if (counter == 1) {
+            dictionaryOffset = firstDataPageOffset = 42;
+            // ^ This page offset corresponds to the end of first row group. To compute this, set it to 0 and look at
+            // the assertion failure.
+        }
+        counter++;
     }
 
     @Override

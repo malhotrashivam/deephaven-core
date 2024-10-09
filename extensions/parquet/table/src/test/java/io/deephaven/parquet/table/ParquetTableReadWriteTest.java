@@ -1735,6 +1735,17 @@ public final class ParquetTableReadWriteTest {
         }
     }
 
+
+    @Test
+    public void testWritingEmptyRowGroup() {
+        final Table table = TableTools.emptyTable(10).update(
+                "integers = (int)(ii%3)");
+        final String dest = rootFile + File.separator + "testWritingEmptyRowGroup.parquet";
+        ParquetTools.writeTable(table, dest);
+        final Table fromDisk = ParquetTools.readTable(dest);
+        assertTableEquals(merge(table, table), fromDisk);
+    }
+
     @Test
     public void decimalLogicalTypeTest() {
         final Table expected = TableTools.emptyTable(100_000).update(
