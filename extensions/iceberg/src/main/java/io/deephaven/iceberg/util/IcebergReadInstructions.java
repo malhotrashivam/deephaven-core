@@ -4,12 +4,10 @@
 package io.deephaven.iceberg.util;
 
 import io.deephaven.annotations.CopyableStyle;
-import io.deephaven.engine.table.TableDefinition;
 import org.immutables.value.Value;
 import org.immutables.value.Value.Immutable;
 
 import java.util.Map;
-import java.util.Optional;
 
 /**
  * This class provides instructions intended for reading Iceberg catalogs and tables. The default values documented in
@@ -17,28 +15,16 @@ import java.util.Optional;
  */
 @Immutable
 @CopyableStyle
-public abstract class IcebergInstructions {
+public abstract class IcebergReadInstructions implements IcebergBaseInstructions {
     /**
-     * The default {@link IcebergInstructions} to use when reading Iceberg data files. Providing this will use system
-     * defaults for cloud provider-specific parameters
+     * The default {@link IcebergReadInstructions} to use when reading Iceberg data files. Providing this will use
+     * system defaults for cloud provider-specific parameters.
      */
-    @SuppressWarnings("unused")
-    public static final IcebergInstructions DEFAULT = builder().build();
+    public static final IcebergReadInstructions DEFAULT = builder().build();
 
     public static Builder builder() {
-        return ImmutableIcebergInstructions.builder();
+        return ImmutableIcebergReadInstructions.builder();
     }
-
-    /**
-     * The {@link TableDefinition} to use when reading Iceberg data files.
-     */
-    public abstract Optional<TableDefinition> tableDefinition();
-
-    /**
-     * The data instructions to use for reading the Iceberg data files (might be S3Instructions or other cloud
-     * provider-specific instructions).
-     */
-    public abstract Optional<Object> dataInstructions();
 
     /**
      * A {@link Map map} of rename instructions from Iceberg to Deephaven column names to use when reading the Iceberg
@@ -49,7 +35,7 @@ public abstract class IcebergInstructions {
     /**
      * Return a copy of this instructions object with the column renames replaced by {@code entries}.
      */
-    public abstract IcebergInstructions withColumnRenames(Map<String, ? extends String> entries);
+    public abstract IcebergReadInstructions withColumnRenames(Map<String, ? extends String> entries);
 
     /**
      * The {@link IcebergUpdateMode} mode to use when reading the Iceberg data files. Default is
@@ -60,14 +46,7 @@ public abstract class IcebergInstructions {
         return IcebergUpdateMode.staticMode();
     }
 
-    public interface Builder {
-        @SuppressWarnings("unused")
-        Builder tableDefinition(TableDefinition tableDefinition);
-
-        @SuppressWarnings("unused")
-        Builder dataInstructions(Object s3Instructions);
-
-        @SuppressWarnings("unused")
+    public interface Builder extends IcebergBaseInstructions.Builder<Builder> {
         Builder putColumnRenames(String key, String value);
 
         @SuppressWarnings("unused")
@@ -76,6 +55,6 @@ public abstract class IcebergInstructions {
         @SuppressWarnings("unused")
         Builder updateMode(IcebergUpdateMode updateMode);
 
-        IcebergInstructions build();
+        IcebergReadInstructions build();
     }
 }
