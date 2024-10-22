@@ -4,60 +4,19 @@
 package io.deephaven.iceberg.util;
 
 import io.deephaven.annotations.BuildableStyle;
-import org.apache.iceberg.Snapshot;
 import org.immutables.value.Value;
 
-import java.util.Optional;
-import java.util.OptionalLong;
-
 /**
- * Instructions for reading an Iceberg table.
+ * Instructions for reading an Iceberg table as a Deephaven table.
  */
 @Value.Immutable
 @BuildableStyle
-public abstract class IcebergReadTable {
-    /**
-     * The instructions for customizations while reading, defaults to {@link IcebergReadInstructions#DEFAULT}.
-     */
-    @Value.Default
-    public IcebergReadInstructions instructions() {
-        return IcebergReadInstructions.DEFAULT;
-    }
-
-    /**
-     * The identifier of the snapshot to load. If both this and {@link #snapshot()} are provided, the
-     * {@link Snapshot#snapshotId()} should match this. Otherwise, only one of them should be provided. If neither is
-     * provided, the latest snapshot will be loaded.
-     */
-    public abstract OptionalLong tableSnapshotId();
-
-    /**
-     * The snapshot to load. If both this and {@link #tableSnapshotId()} are provided, the {@link Snapshot#snapshotId()}
-     * should match the {@link #tableSnapshotId()}. Otherwise, only one of them should be provided. If neither is
-     * provided, the latest snapshot will be loaded.
-     */
-    public abstract Optional<Snapshot> snapshot();
+public abstract class IcebergReadTable extends IcebergReadOperationsBase {
 
     public static Builder builder() {
         return ImmutableIcebergReadTable.builder();
     }
 
-    public interface Builder {
-        Builder instructions(IcebergReadInstructions instructions);
-
-        Builder tableSnapshotId(long tableSnapshotId);
-
-        Builder snapshot(Snapshot snapshot);
-
-        IcebergReadTable build();
-    }
-
-    @Value.Check
-    final void checkSnapshotId() {
-        if (tableSnapshotId().isPresent() && snapshot().isPresent() &&
-                tableSnapshotId().getAsLong() != snapshot().get().snapshotId()) {
-            throw new IllegalArgumentException("If both tableSnapshotId and snapshot are provided, the snapshotId " +
-                    "must match");
-        }
+    public interface Builder extends IcebergReadOperationsBase.Builder<IcebergReadTable, Builder> {
     }
 }
