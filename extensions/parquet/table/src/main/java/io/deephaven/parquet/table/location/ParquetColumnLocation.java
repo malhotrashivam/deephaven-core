@@ -64,6 +64,7 @@ final class ParquetColumnLocation<ATTR extends Values> extends AbstractColumnLoc
     private final String parquetColumnName;
 
     private volatile boolean readersInitialized;
+    private final Object readersLock;
 
     // Access to following variables must be guarded by initializeReaders()
     // -----------------------------------------------------------------------
@@ -80,6 +81,7 @@ final class ParquetColumnLocation<ATTR extends Values> extends AbstractColumnLoc
     // -----------------------------------------------------------------------
 
     private volatile boolean pagesInitialized;
+    private final Object pagesLock;
 
     // Access to following variables must be guarded by initializePages()
     // -----------------------------------------------------------------------
@@ -102,14 +104,16 @@ final class ParquetColumnLocation<ATTR extends Values> extends AbstractColumnLoc
         this.columnName = columnName;
         this.parquetColumnName = parquetColumnName;
         this.readersInitialized = false;
+        this.readersLock = new Object();
         this.pagesInitialized = false;
+        this.pagesLock = new Object();
     }
 
     private void initializeReaders() {
         if (readersInitialized) {
             return;
         }
-        synchronized (this) {
+        synchronized (readersLock) {
             if (readersInitialized) {
                 return;
             }
@@ -313,7 +317,7 @@ final class ParquetColumnLocation<ATTR extends Values> extends AbstractColumnLoc
         if (pagesInitialized) {
             return;
         }
-        synchronized (this) {
+        synchronized (pagesLock) {
             if (pagesInitialized) {
                 return;
             }

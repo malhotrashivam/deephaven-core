@@ -60,6 +60,9 @@ public class ParquetTableLocation extends AbstractTableLocation {
 
     // Access to all the following variables must be guarded by initialize()
     // -----------------------------------------------------------------------
+    private ParquetFileReader parquetFileReader;
+    private int[] rowGroupIndices;
+
     private RegionedPageStore.Parameters regionParameters;
     private Map<String, String[]> parquetColumnNameToPath;
 
@@ -68,7 +71,7 @@ public class ParquetTableLocation extends AbstractTableLocation {
     private Map<String, ColumnTypeInfo> columnTypes;
     private List<SortColumn> sortingColumns;
 
-    private RowGroupReader[] rowGroupReaders;
+    private volatile RowGroupReader[] rowGroupReaders;
     // -----------------------------------------------------------------------
 
     public ParquetTableLocation(@NotNull final TableKey tableKey,
@@ -87,10 +90,8 @@ public class ParquetTableLocation extends AbstractTableLocation {
             if (isInitialized) {
                 return;
             }
-            final ParquetFileReader parquetFileReader;
             final ParquetMetadata parquetMetadata;
             final ParquetTableLocationKey tableLocationKey = getParquetKey();
-            final int[] rowGroupIndices;
             synchronized (tableLocationKey) {
                 // Following methods are internally synchronized, we synchronize them together here to minimize
                 // lock/unlock calls
@@ -122,11 +123,6 @@ public class ParquetTableLocation extends AbstractTableLocation {
             groupingColumns = tableInfo.groupingColumnMap();
             columnTypes = tableInfo.columnTypeMap();
             sortingColumns = SortColumnInfo.sortColumns(tableInfo.sortingColumns());
-
-            rowGroupReaders = IntStream.of(rowGroupIndices)
-                    .mapToObj(idx -> parquetFileReader.getRowGroup(idx, tableInfo.version()))
-                    .sorted(Comparator.comparingInt(rgr -> rgr.getRowGroup().getOrdinal()))
-                    .toArray(RowGroupReader[]::new);
 
             if (!FILE_URI_SCHEME.equals(tableLocationKey.getURI().getScheme())) {
                 // We do not have the last modified time for non-file URIs
@@ -166,8 +162,22 @@ public class ParquetTableLocation extends AbstractTableLocation {
     }
 
     RowGroupReader[] getRowGroupReaders() {
-        initialize();
-        return rowGroupReaders;
+        RowGroupReader[] local;
+        if ((local = rowGroupReaders) != null) {
+            return local;
+        }
+        synchronized (this) {
+            if ((local = rowGroupReaders) != null) {
+                return local;
+            }
+            initialize();
+            local = IntStream.of(rowGroupIndices)
+                    .mapToObj(idx -> parquetFileReader.getRowGroup(idx, tableInfo.version()))
+                    .sorted(Comparator.comparingInt(rgr -> rgr.getRowGroup().getOrdinal()))
+                    .toArray(RowGroupReader[]::new);
+            rowGroupReaders = local;
+            return local;
+        }
     }
 
     @Override
