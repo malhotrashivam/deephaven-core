@@ -60,9 +60,6 @@ public class ParquetTableLocation extends AbstractTableLocation {
 
     // Access to all the following variables must be guarded by initialize()
     // -----------------------------------------------------------------------
-    private ParquetFileReader parquetFileReader;
-    private int[] rowGroupIndices;
-
     private RegionedPageStore.Parameters regionParameters;
     private Map<String, String[]> parquetColumnNameToPath;
 
@@ -71,8 +68,11 @@ public class ParquetTableLocation extends AbstractTableLocation {
     private Map<String, ColumnTypeInfo> columnTypes;
     private List<SortColumn> sortingColumns;
 
-    private volatile RowGroupReader[] rowGroupReaders;
+    private ParquetFileReader parquetFileReader;
+    private int[] rowGroupIndices;
     // -----------------------------------------------------------------------
+
+    private volatile RowGroupReader[] rowGroupReaders;
 
     public ParquetTableLocation(@NotNull final TableKey tableKey,
             @NotNull final ParquetTableLocationKey tableLocationKey,
@@ -175,6 +175,11 @@ public class ParquetTableLocation extends AbstractTableLocation {
                     .mapToObj(idx -> parquetFileReader.getRowGroup(idx, tableInfo.version()))
                     .sorted(Comparator.comparingInt(rgr -> rgr.getRowGroup().getOrdinal()))
                     .toArray(RowGroupReader[]::new);
+
+            // We don't need these anymore
+            parquetFileReader = null;
+            rowGroupIndices = null;
+
             rowGroupReaders = local;
             return local;
         }
