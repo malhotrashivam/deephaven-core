@@ -56,6 +56,7 @@ jpy = "1.1.0"
 jsinterop = "2.0.2"
 # google is annoying, and have different versions released for the same groupId
 jsinterop-base = "1.0.3"
+json-smart = "2.4.8"
 logback = "1.5.16"
 lz4 = "1.8.0"
 mindrot = "0.4"
@@ -255,6 +256,8 @@ mindrot-jbcrypt = { module = "org.mindrot:jbcrypt", version.ref = "mindrot" }
 nidi-graphviz-java = { module = "guru.nidi:graphviz-java", version.ref = "nidi" }
 
 oshi-core = { module = "com.github.oshi:oshi-core", version.ref = "oshi" }
+
+json-smart = { module = "net.minidev:json-smart", version.ref = "json-smart" }
 
 pac4j-http = { module = "org.pac4j:pac4j-http", version.ref = "pac4j" }
 pac4j-oidc = { module = "org.pac4j:pac4j-oidc", version.ref = "pac4j" }
