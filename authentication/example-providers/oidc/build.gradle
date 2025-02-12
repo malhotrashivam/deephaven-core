@@ -1,4 +1,5 @@
 dependencies {
+    implementation libs.json.smart
     implementation libs.pac4j.oidc
     implementation libs.pac4j.http
 }

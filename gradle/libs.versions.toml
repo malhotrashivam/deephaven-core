@@ -61,6 +61,7 @@ lz4 = "1.8.0"
 mindrot = "0.4"
 nidi = "0.18.1"
 oshi = "5.8.3"
+json-smart = "2.4.8"
 pac4j = "5.7.0"
 parquet = "1.15.0"
 picocli = "4.7.6"
@@ -255,6 +256,8 @@ mindrot-jbcrypt = { module = "org.mindrot:jbcrypt", version.ref = "mindrot" }
 nidi-graphviz-java = { module = "guru.nidi:graphviz-java", version.ref = "nidi" }
 
 oshi-core = { module = "com.github.oshi:oshi-core", version.ref = "oshi" }
+
+json-smart = { module = "net.minidev:json-smart", version.ref = "json-smart" }
 
 pac4j-http = { module = "org.pac4j:pac4j-http", version.ref = "pac4j" }
 pac4j-oidc = { module = "org.pac4j:pac4j-oidc", version.ref = "pac4j" }
