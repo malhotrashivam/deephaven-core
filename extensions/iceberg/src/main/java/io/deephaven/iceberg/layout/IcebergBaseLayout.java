@@ -167,7 +167,7 @@ public abstract class IcebergBaseLayout implements TableLocationKeyFinder<Iceber
         return io instanceof RelativeFileIO ? ((RelativeFileIO) io).absoluteLocation(path) : path;
     }
 
-    private static URI locationUri(Table table) {
+    public static URI locationUri(Table table) {
         return FileUtils.convertToURI(path(table.location(), table.io()), true);
     }
 

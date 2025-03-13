@@ -145,7 +145,7 @@ class TableParquetWriterOptionsTest {
                 ColumnDefinition.ofLong("I"));
         final Map<Integer, String> fieldIdToName = Map.of(2, "field2", 3, "field3");
         final ParquetInstructions parquetInstructions = writeInstructions.toParquetInstructions(
-                null, definition, fieldIdToName);
+                null, definition, fieldIdToName, null);
 
         assertThat(parquetInstructions.getCompressionCodecName()).isEqualTo("GZIP");
         assertThat(parquetInstructions.getMaximumDictionaryKeys()).isEqualTo(100);
