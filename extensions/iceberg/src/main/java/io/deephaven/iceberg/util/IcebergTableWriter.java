@@ -31,6 +31,7 @@ import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.Transaction;
 import org.apache.iceberg.encryption.EncryptedOutputFile;
+import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.io.OutputFileFactory;
 import org.apache.iceberg.mapping.MappedField;
 import org.apache.iceberg.mapping.NameMapping;
@@ -42,16 +43,20 @@ import org.jetbrains.annotations.NotNull;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import static io.deephaven.iceberg.base.IcebergUtils.convertToIcebergType;
-import static io.deephaven.iceberg.base.IcebergUtils.verifyPartitioningColumns;
-import static io.deephaven.iceberg.base.IcebergUtils.verifyRequiredFields;
 
 /**
  * This class is responsible for writing Deephaven tables to an Iceberg table. Each instance of this class is associated
@@ -114,6 +119,10 @@ public class IcebergTableWriter {
     private static final String CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     private static final int VARIABLE_NAME_LENGTH = 6;
 
+    private static final Set<Class<?>> SUPPORTED_PARTITIONING_TYPES =
+            Set.of(Boolean.class, double.class, float.class, int.class, long.class, String.class, LocalDate.class,
+                    LocalDateTime.class, Instant.class);
+
     /**
      * Create a new Iceberg table writer instance.
      *
@@ -133,8 +142,6 @@ public class IcebergTableWriter {
 
         this.tableDefinition = tableWriterOptions.tableDefinition();
         this.nonPartitioningTableDefinition = nonPartitioningTableDefinition(tableDefinition);
-        verifyRequiredFields(table.schema(), tableDefinition);
-        verifyPartitioningColumns(tableSpec, tableDefinition);
 
         this.userSchema = ((SchemaProviderImpl) tableWriterOptions.schemaProvider()).getSchema(table);
         verifyFieldIdsInSchema(tableWriterOptions.fieldIdToColumnName().keySet(), userSchema);
@@ -143,6 +150,8 @@ public class IcebergTableWriter {
         // provided by the user.
         this.fieldIdToColumnName = new HashMap<>(tableWriterOptions.fieldIdToColumnName());
         addFieldIdsForAllColumns();
+        verifyRequiredFields();
+        verifyPartitioningColumns();
 
         outputFileFactory = OutputFileFactory.builderFor(table, 0, 0)
                 .format(FileFormat.PARQUET)
@@ -282,6 +291,68 @@ public class IcebergTableWriter {
     }
 
     /**
+     * Check that all required fields are present in the table definition to be written by this writer or have a
+     * write-default.
+     */
+    private void verifyRequiredFields() {
+        Require.neqNull(userSchema, "userSchema");
+        Require.neqNull(fieldIdToColumnName, "fieldIdToColumnName");
+        Require.neqNull(tableDefinition, "tableDefinition");
+        final Schema tableSchema = userSchema;
+        for (final Types.NestedField field : tableSchema.columns()) {
+            if (field.isRequired() && !fieldIdToColumnName.containsKey(field.fieldId())) {
+                // TODO (deephaven-core#6343): Add check for writeDefault() not set for required fields
+                throw new IllegalArgumentException(
+                        "Field " + field + " is required in the table schema, but is not present in the table " +
+                                "definition and does not have a write-default, table schema " + tableSchema +
+                                ", tableDefinition " + tableDefinition + ", fieldIdToColumnName " +
+                                fieldIdToColumnName);
+            }
+        }
+    }
+
+    /**
+     * Check that all the partitioning columns from the partition spec are present in the table definition to be written
+     * by this writer.
+     */
+    private void verifyPartitioningColumns() {
+        Require.neqNull(tableSpec, "tableSpec");
+        Require.neqNull(tableDefinition, "tableDefinition");
+        final List<String> partitioningColumnNamesFromDefinition = tableDefinition.getColumnStream()
+                .filter(ColumnDefinition::isPartitioning)
+                .peek(columnDefinition -> {
+                    if (!SUPPORTED_PARTITIONING_TYPES.contains(columnDefinition.getDataType())) {
+                        throw new IllegalArgumentException("Unsupported partitioning column type " +
+                                columnDefinition.getDataType() + " for column " + columnDefinition.getName());
+                    }
+                })
+                .map(ColumnDefinition::getName)
+                .collect(Collectors.toList());
+        final List<PartitionField> partitionFieldsFromTableSpec = tableSpec.fields();
+        final int numPartitioningFieldsFromTableSpec = partitionFieldsFromTableSpec.size();
+        if (numPartitioningFieldsFromTableSpec != partitioningColumnNamesFromDefinition.size()) {
+            throw new IllegalArgumentException("Partition spec contains " + partitionFieldsFromTableSpec.size() +
+                    " fields, but the table definition contains " + partitioningColumnNamesFromDefinition.size()
+                    + " fields, partition spec: " + tableSpec + ", table definition: " + tableDefinition);
+        }
+        for (int colIdx = 0; colIdx < numPartitioningFieldsFromTableSpec; colIdx += 1) {
+            final PartitionField partitionField = partitionFieldsFromTableSpec.get(colIdx);
+            final String expectedPartitionColumnName = fieldIdToColumnName.get(partitionField.sourceId());
+            if (expectedPartitionColumnName == null) {
+                throw new IllegalArgumentException("Partitioning field " + partitionField + " is not present " +
+                        "in the table definition: " + tableDefinition + ", partition spec: " +
+                        tableSpec + ", fieldIdToColumnName: " + fieldIdToColumnName);
+            }
+            if (!partitioningColumnNamesFromDefinition.get(colIdx).equals(expectedPartitionColumnName)) {
+                throw new IllegalArgumentException("Partitioning field " + partitionField + " is not present " +
+                        "in the table definition at idx " + colIdx + " in the table definition: " + tableDefinition +
+                        ", partition spec: " + tableSpec + ", fieldIdToColumnName: " +
+                        fieldIdToColumnName);
+            }
+        }
+    }
+
+    /**
      * Append the provided Deephaven {@link IcebergWriteInstructions#tables()} as new partitions to the existing Iceberg
      * table in a single snapshot. This method will not perform any compatibility checks between the existing schema and
      * the provided Deephaven tables.
@@ -369,13 +440,13 @@ public class IcebergTableWriter {
         final QueryScope queryScope = ExecutionContext.getContext().getQueryScope();
         for (final String partitionPath : partitionPaths) {
             final String[] dhTableUpdateString = new String[numPartitioningFields];
+            final PartitionData partitionData = new PartitionData(partitionSpec.partitionType());
             try {
                 final String[] partitions = partitionPath.split("/", -1);
                 if (partitions.length != numPartitioningFields) {
                     throw new IllegalArgumentException("Expecting " + numPartitioningFields + " number of fields, " +
                             "found " + partitions.length);
                 }
-                final PartitionData partitionData = new PartitionData(partitionSpec.partitionType());
                 for (int colIdx = 0; colIdx < partitions.length; colIdx += 1) {
                     final String[] parts = partitions[colIdx].split("=", 2);
                     if (parts.length != 2) {
@@ -387,15 +458,17 @@ public class IcebergTableWriter {
                                 colIdx + ", found " + parts[0]);
                     }
                     final Type type = partitionData.getType(colIdx);
-                    dhTableUpdateString[colIdx] = getTableUpdateString(field.name(), type, parts[1], queryScope);
-                    partitionData.set(colIdx, Conversions.fromPartitionString(partitionData.getType(colIdx), parts[1]));
+                    final String partitionValueStr = parts[1];
+                    dhTableUpdateString[colIdx] =
+                            getTableUpdateString(field.name(), type, partitionValueStr, queryScope);
+                    partitionData.set(colIdx, Literal.of(partitionValueStr).to(type).value());
                 }
             } catch (final Exception e) {
                 throw new IllegalArgumentException("Failed to parse partition path: " + partitionPath + " using" +
                         " partition spec " + partitionSpec + ", check cause for more details ", e);
             }
             dhTableUpdateStringList.add(dhTableUpdateString);
-            partitionDataList.add(DataFiles.data(partitionSpec, partitionPath));
+            partitionDataList.add(partitionData);
         }
         return new Pair<>(partitionDataList, dhTableUpdateStringList);
     }
@@ -425,24 +498,50 @@ public class IcebergTableWriter {
         // TODO(deephaven-core#6418): Find a better way to handle these table updates instead of using query scope
         final String paramName = generateRandomAlphabetString(VARIABLE_NAME_LENGTH);
         final Type.TypeID typeId = colType.typeId();
+        final Object parsedValue; // Used to populate the query scope
         if (typeId == Type.TypeID.BOOLEAN) {
-            queryScope.putParam(paramName, Boolean.parseBoolean(value));
+            parsedValue = Boolean.valueOf(value);
         } else if (typeId == Type.TypeID.DOUBLE) {
-            queryScope.putParam(paramName, Double.parseDouble(value));
+            parsedValue = Double.valueOf(value);
         } else if (typeId == Type.TypeID.FLOAT) {
-            queryScope.putParam(paramName, Float.parseFloat(value));
+            parsedValue = Float.valueOf(value);
         } else if (typeId == Type.TypeID.INTEGER) {
-            queryScope.putParam(paramName, Integer.parseInt(value));
+            parsedValue = Integer.valueOf(value);
         } else if (typeId == Type.TypeID.LONG) {
-            queryScope.putParam(paramName, Long.parseLong(value));
+            parsedValue = Long.valueOf(value);
         } else if (typeId == Type.TypeID.STRING) {
-            queryScope.putParam(paramName, value);
+            parsedValue = value;
         } else if (typeId == Type.TypeID.DATE) {
-            queryScope.putParam(paramName, LocalDate.parse(value));
+            parsedValue = LocalDate.parse(value);
+        } else if (typeId == Type.TypeID.TIMESTAMP) {
+            // The following logic is inspired from org.apache.iceberg.expressions.Literals.StringLiteral#to
+            // implementation for TIMESTAMP type
+            if (((Types.TimestampType) colType).shouldAdjustToUTC()) {
+                final OffsetDateTime offsetDateTime;
+                try {
+                    offsetDateTime = OffsetDateTime.parse(value, DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+                } catch (final DateTimeParseException e) {
+                    throw new IllegalArgumentException("Could not parse partitioning column value " + value + " of " +
+                            "type " + colType + " for column " + colName + " using parser " +
+                            DateTimeFormatter.ISO_OFFSET_DATE_TIME, e);
+                }
+                parsedValue = offsetDateTime.toInstant();
+            } else {
+                try {
+                    parsedValue = LocalDateTime.parse(value, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+                } catch (final DateTimeParseException e) {
+                    throw new IllegalArgumentException("Could not parse partitioning column value " + value + " of " +
+                            "type " + colType + " for column " + colName + " using parser " +
+                            DateTimeFormatter.ISO_LOCAL_DATE_TIME, e);
+                }
+            }
         } else {
             // TODO (deephaven-core#6327) Add support for more partitioning types like Big Decimals
-            throw new TableDataException("Unsupported partitioning column type " + typeId.name());
+            throw new TableDataException("Could not parse partitioning column value " + value + " of type " +
+                    colType + " for column " + colName + ", supported types are " + SUPPORTED_PARTITIONING_TYPES);
         }
+        queryScope.putParam(paramName, parsedValue);
+        // When adding more types to the above if-else block, make sure to update set of supported partitioning types
         return colName + " = " + paramName;
     }
 

@@ -17,6 +17,8 @@ import org.apache.iceberg.data.IdentityPartitionConverters;
 import org.jetbrains.annotations.NotNull;
 
 import java.net.URI;
+import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.*;
 
 /**
@@ -92,11 +94,15 @@ public final class IcebergKeyValuePartitionedLayout extends IcebergBaseLayout {
         final PartitionData partitionData = (PartitionData) dataFile.partition();
         for (final IdentityPartitioningColData colData : identityPartitioningColumns) {
             final String colName = colData.name;
-            final Object colValue;
+            Object colValue;
             final Object valueFromPartitionData = partitionData.get(colData.index);
             if (valueFromPartitionData != null) {
                 colValue = IdentityPartitionConverters.convertConstant(
                         partitionData.getType(colData.index), valueFromPartitionData);
+                if (colData.type == Instant.class && colValue instanceof OffsetDateTime) {
+                    // TODO: Look if we really need this hacky fix for parsing timestamps.
+                    colValue = ((OffsetDateTime) colValue).toInstant();
+                }
                 if (!colData.type.isAssignableFrom(colValue.getClass())) {
                     throw new TableDataException("Partitioning column " + colName
                             + " has type " + colValue.getClass().getName()

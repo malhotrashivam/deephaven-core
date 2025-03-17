@@ -46,6 +46,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.Map;
@@ -780,7 +781,7 @@ public abstract class SqliteCatalogBase {
     }
 
     @Test
-    void testPartitionedAppendWithAllPartitioningTypes() {
+    void testPartitionedAppendWithAllSupportedPartitioningTypes() {
         final TableDefinition definition = TableDefinition.of(
                 ColumnDefinition.ofString("StringPC").withPartitioning(),
                 ColumnDefinition.ofBoolean("BooleanPC").withPartitioning(),
@@ -827,6 +828,38 @@ public abstract class SqliteCatalogBase {
                 "LocalDatePC = LocalDate.parse(`2023-10-01`)")
                 .moveColumns(7, "data");
         assertTableEquals(expected, fromIceberg);
+    }
+
+    @Test
+    void testPartitionedAppendWithUnupportedPartitioningTypes() {
+        final TableDefinition definition = TableDefinition.of(
+                ColumnDefinition.of("InstantPC", Type.find(Instant.class)).withPartitioning(),
+                ColumnDefinition.ofInt("data"));
+
+        final TableIdentifier tableIdentifier = TableIdentifier.parse("MyNamespace.MyTable");
+        final IcebergTableAdapter tableAdapter = catalogAdapter.createTable(tableIdentifier, definition);
+        final Table source = TableTools.newTable(
+                intCol("data", 15, 0, 32, 33, 19));
+        final IcebergTableWriter tableWriter = tableAdapter.tableWriter(writerOptionsBuilder()
+                .tableDefinition(definition)
+                .build());
+
+        final String instantString = "2024-06-03T20:20:55.438269Z";
+        final List<String> partitionPaths = List.of("InstantPC=" + instantString);
+        tableWriter.append(IcebergWriteInstructions.builder()
+                .addTables(source)
+                .addAllPartitionPaths(partitionPaths)
+                .build());
+        final Table fromIceberg = tableAdapter.table();
+        assertThat(fromIceberg.getDefinition()).isEqualTo(definition);
+
+        final Table expected = source.updateView(
+                "InstantPC = Instant.parse(`" + instantString + "`)")
+                .moveColumns(1, "data");
+        assertTableEquals(expected, fromIceberg);
+
+        // Add more tests for TimestampTZ with different timezone instants and local date times
+        // Also, look for how do external libraries like pyspark, etc. encode timestamps.
     }
 
     @Test
