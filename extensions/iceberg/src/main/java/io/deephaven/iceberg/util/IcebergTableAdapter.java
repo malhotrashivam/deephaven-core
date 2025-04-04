@@ -34,6 +34,7 @@ import org.apache.iceberg.Schema;
 import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.transforms.Transform;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
 import org.jetbrains.annotations.NotNull;
@@ -397,8 +398,8 @@ public class IcebergTableAdapter {
             keyFinder = new IcebergFlatLayout(this, updatedInstructions, dataInstructionsProviderLoader);
         } else {
             // Create the partitioning column location key finder
-            keyFinder = new IcebergKeyValuePartitionedLayout(this, partitionSpec, updatedInstructions,
-                    dataInstructionsProviderLoader);
+            keyFinder = new IcebergKeyValuePartitionedLayout(this, partitionSpec, schema,
+                    updatedInstructions, dataInstructionsProviderLoader);
         }
 
         if (updatedInstructions.updateMode().updateType() == IcebergUpdateMode.IcebergUpdateType.STATIC) {
@@ -526,14 +527,31 @@ public class IcebergTableAdapter {
                 ? userTableDef.getColumnNameSet()
                 : null;
 
-        final Set<String> partitionNames =
-                partitionSpec.fields().stream()
-                        .map(PartitionField::name)
-                        .map(colName -> columnRenameMap.getOrDefault(colName, colName))
-                        .collect(Collectors.toSet());
+        final Collection<String> identityPartitionColumns = new HashSet<>();
+        final Collection<ColumnDefinition<?>> columns = new ArrayList<>();
 
-        final List<ColumnDefinition<?>> columns = new ArrayList<>();
+        // Process the partition spec to add all non-identity partitioning columns first
+        for (final PartitionField partitionField : partitionSpec.fields()) {
+            final String name = columnRenameMap.getOrDefault(partitionField.name(), partitionField.name());
+            // Skip columns that are not in the provided table definition.
+            if (columnNames != null && !columnNames.contains(name)) {
+                continue;
+            }
+            final Transform<?, ?> transform = partitionField.transform();
+            if (transform.isIdentity()) {
+                // Will be added as a partition column when processing the schema
+                identityPartitionColumns.add(name);
+                continue;
+            }
+            final Type sourceType = partitionSpec.schema().findType(partitionField.sourceId());
+            final Type type = transform.getResultType(sourceType);
+            final io.deephaven.qst.type.Type<?> qstType = convertToDHType(type);
+            // TODO Think about adding the right type here, like for month or day, we can use LocalDate, for hour, we
+            // can use LocalTime, or maybe string for all.
+            columns.add(ColumnDefinition.of(name, qstType).withPartitioning());
+        }
 
+        // Process the schema to add all non-partitioning as well as identity partitioning columns preserving the order
         for (final Types.NestedField field : schema.columns()) {
             final String name = columnRenameMap.getOrDefault(field.name(), field.name());
             // Skip columns that are not in the provided table definition.
@@ -542,13 +560,11 @@ public class IcebergTableAdapter {
             }
             final Type type = field.type();
             final io.deephaven.qst.type.Type<?> qstType = convertToDHType(type);
-            final ColumnDefinition<?> column;
-            if (partitionNames.contains(name)) {
-                column = ColumnDefinition.of(name, qstType).withPartitioning();
+            if (identityPartitionColumns.contains(name)) {
+                columns.add(ColumnDefinition.of(name, qstType).withPartitioning());
             } else {
-                column = ColumnDefinition.of(name, qstType);
+                columns.add(ColumnDefinition.of(name, qstType));
             }
-            columns.add(column);
         }
 
         final TableDefinition icebergTableDef = TableDefinition.of(columns);
