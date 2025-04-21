@@ -107,17 +107,17 @@ final class ResolverFactory implements ParquetColumnResolver.Factory {
             final int fieldId,
             final org.apache.iceberg.types.Type readerType,
             @Nullable final MappedField fallback) throws MappingException {
-        if (readerType.isPrimitiveType()) {
+        if (readerType.isPrimitiveType() && readerType.typeId() != org.apache.iceberg.types.Type.TypeID.BINARY) {
             return List.of(findPrimitive(fieldId, type, readerType.asPrimitiveType(), fallback));
         }
         if (readerType.isStructType()) {
             return List.of(findStruct(fieldId, type, readerType.asStructType(), fallback));
         }
+        if (readerType.isListType() || readerType.typeId() == org.apache.iceberg.types.Type.TypeID.BINARY) {
+            return findList(fieldId, type, readerType, fallback);
+        }
         if (readerType.isMapType()) {
             return findMap(fieldId, type, readerType.asMapType(), fallback);
-        }
-        if (readerType.isListType()) {
-            return findList(fieldId, type, readerType.asListType(), fallback);
         }
         throw new IllegalStateException();
     }
@@ -195,6 +195,41 @@ final class ResolverFactory implements ParquetColumnResolver.Factory {
         return found;
     }
 
+    /**
+     * The following method assumes that the field will have a 3-level structure as explained
+     * <a href="https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists">here</a>.
+     */
+    private static List<Type> findList(
+            final int fieldId,
+            final GroupType type,
+            final org.apache.iceberg.types.Type readerListType,
+            @Nullable final MappedField fallback) throws MappingException {
+        // Locate the outer LIST‑annotated field
+        final Type listType = findField(fieldId, type, fallback);
+        checkListCompatible(listType, readerListType);
+        if (listType.isPrimitive()) {
+            throw new MappingException("Expected LIST field with fieldId " + fieldId + " is not a group: " + listType);
+        }
+        final GroupType listGroupType = listType.asGroupType();
+
+        // Each group must contain exactly one REPEATED child
+        if (listGroupType.getFields().size() != 1) {
+            throw new MappingException("LIST group must have exactly 1 child, found " + listGroupType.getFields());
+        }
+        final Type repeated = listGroupType.getFields().get(0);
+        if (repeated.isPrimitive() || !repeated.isRepetition(Type.Repetition.REPEATED)) {
+            throw new MappingException("LIST group must have exactly 1 REPEATED group child, found " + repeated);
+        }
+        final GroupType repeatedListGroup = repeated.asGroupType();
+
+        // Get the actual element
+        if (repeatedListGroup.getFields().size() != 1) {
+            throw new MappingException("LIST repeated group must have 1 child, found " + repeatedListGroup.getFields());
+        }
+        final Type element = repeatedListGroup.getFields().get(0);
+        return List.of(listType, repeated, element);
+    }
+
     private static List<Type> findMap(
             final int fieldId,
             final GroupType type,
@@ -203,13 +238,6 @@ final class ResolverFactory implements ParquetColumnResolver.Factory {
         throw new MapUnsupported();
     }
 
-    private static List<Type> findList(
-            final int fieldId,
-            final GroupType type,
-            final Types.ListType readerListType,
-            @Nullable final MappedField fallback) throws MappingException {
-        throw new ListUnsupported();
-    }
 
     private static void checkCompatible(Type ptype, org.apache.iceberg.types.Type.PrimitiveType readerPrimitiveType) {
         // TODO
@@ -223,11 +251,15 @@ final class ResolverFactory implements ParquetColumnResolver.Factory {
 
     }
 
+    private static void checkListCompatible(final Type ptype, final org.apache.iceberg.types.Type readerListType) {
+        // TODO
+    }
+
     private static void checkCompatible(List<Type> ptypes, Types.MapType readerMapType) {
 
     }
 
-    private static abstract class MappingException extends Exception {
+    private static class MappingException extends Exception {
 
         public MappingException() {}
 
