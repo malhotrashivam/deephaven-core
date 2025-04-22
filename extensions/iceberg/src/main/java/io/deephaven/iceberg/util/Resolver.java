@@ -8,6 +8,7 @@ import io.deephaven.api.util.NameValidator;
 import io.deephaven.base.verify.Assert;
 import io.deephaven.engine.table.ColumnDefinition;
 import io.deephaven.engine.table.TableDefinition;
+import io.deephaven.engine.table.impl.locations.TableDataException;
 import io.deephaven.iceberg.base.IcebergUtils;
 import io.deephaven.iceberg.internal.Inference;
 import io.deephaven.iceberg.internal.SchemaHelper;
@@ -77,10 +78,27 @@ public abstract class Resolver {
         final Collection<String> partitioningColumnNames = new ArrayList<>();
         final List<Types.NestedField> fields = new ArrayList<>();
         int fieldID = INITIAL_FIELD_ID;
+
+        // When building a schema in Java using Iceberg, the field IDs of the outer struct fields are assigned before
+        // the field IDs of nested types. See org.apache.iceberg.types,TypeUtil.visit and
+        // org.apache.iceberg.types.AssignFreshIds.
+        int elementFieldId = INITIAL_FIELD_ID + definition.numColumns();
         for (final ColumnDefinition<?> columnDefinition : definition.getColumns()) {
             final String dhColumnName = columnDefinition.getName();
-            final org.apache.iceberg.types.Type icebergType =
-                    IcebergUtils.convertToIcebergType(columnDefinition.getDataType());
+            final org.apache.iceberg.types.Type icebergType;
+            if (columnDefinition.getComponentType() == null) {
+                icebergType = IcebergUtils.convertToIcebergType(columnDefinition.getDataType());
+            } else {
+                // List type
+                final org.apache.iceberg.types.Type icebergComponentType;
+                try {
+                    icebergComponentType = IcebergUtils.convertToIcebergType(columnDefinition.getComponentType());
+                } catch (final TableDataException e) {
+                    throw new TableDataException("Failed to convert " + columnDefinition + " to Iceberg type", e);
+                }
+                icebergType = Types.ListType.ofOptional(elementFieldId, icebergComponentType);
+                elementFieldId++;
+            }
             fields.add(Types.NestedField.optional(fieldID, dhColumnName, icebergType));
             if (columnDefinition.isPartitioning()) {
                 partitioningColumnNames.add(dhColumnName);
@@ -358,7 +376,13 @@ public abstract class Resolver {
         checkCompatible(path);
         // todo: compare against DH type(s)
         final NestedField lastField = path.stream().reduce((p, n) -> n).orElseThrow();
-        if (!type.walk(new IcebergPrimitiveCompat(lastField.type().asPrimitiveType()))) {
+        final Boolean supported;
+        if (lastField.type().isPrimitiveType()) {
+            supported = type.walk(new IcebergPrimitiveCompat(lastField.type().asPrimitiveType()));
+        } else {
+            supported = type.walk(new IcebergListCompat(lastField.type().asListType()));
+        }
+        if (!supported) {
             throw new MappingException(
                     String.format("Unable to map Iceberg type `%s` to Deephaven type `%s`", lastField.type(), type));
         }
@@ -400,18 +424,19 @@ public abstract class Resolver {
 
         NestedField lastField = null;
         for (final NestedField nestedField : fieldPath) {
-            if (nestedField.type().isListType()) {
-                throw new MappingException("List type not supported"); // todo better error
-            }
             if (nestedField.type().isMapType()) {
                 throw new MappingException("Map type not supported"); // todo better error
             }
             // We *do* support struct mapping implicitly.
             lastField = nestedField;
         }
-        if (!lastField.type().isPrimitiveType()) {
+        final org.apache.iceberg.types.Type lastFieldType = lastField.type();
+        if (lastFieldType.isPrimitiveType()) {
+            checkCompatible(lastField.type().asPrimitiveType());
+        } else if (lastFieldType.isListType() && lastFieldType.asListType().elementType().isPrimitiveType()) {
+            checkCompatible(lastFieldType.asListType());
+        } else {
             // This could be extended in the future with support for:
-            // * List<Primitive>
             // * List<List<...<Primitive>...>
             // * Map<Primitive, Primitive>
             // * Map<List<Primitive>, List<Primitive>>
@@ -419,7 +444,6 @@ public abstract class Resolver {
             // * Other combinations of above.
             throw new MappingException(String.format("Only support mapping to primitive types, field=[%s]", lastField));
         }
-        checkCompatible(lastField.type().asPrimitiveType());
     }
 
     static void checkCompatible(org.apache.iceberg.types.Type.PrimitiveType type) {
@@ -431,6 +455,10 @@ public abstract class Resolver {
         // } catch (Inference.UnsupportedType e) {
         // throw new MappingException(e.getMessage());
         // }
+    }
+
+    static void checkCompatible(Types.ListType listType) {
+        // TODO
     }
 
     public static class MappingException extends RuntimeException {

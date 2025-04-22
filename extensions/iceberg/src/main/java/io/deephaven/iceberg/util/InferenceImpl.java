@@ -86,23 +86,27 @@ final class InferenceImpl extends TypeUtil.SchemaVisitor<Void> {
 
     @Override
     public Void primitive(org.apache.iceberg.types.Type.PrimitiveType primitive) {
+        return processField(primitive);
+    }
+
+    private Void processField(org.apache.iceberg.types.Type icebergType) {
         if (skipDepth != 0) {
             return null;
         }
-        final Type<?> type = Inference.of(primitive).orElse(null);
-        if (type == null) {
+        final Type<?> dhType = Inference.of(icebergType).orElse(null);
+        if (dhType == null) {
             unsupportedTypes.add(new Inference.UnsupportedType(ii.schema(), fieldPath));
             return null;
         }
 
-        final String columnName = namer.of(fieldPath, type);
+        final String columnName = namer.of(fieldPath, dhType);
         NameValidator.validateColumnName(columnName);
 
         final int fieldId = currentFieldId();
         final ColumnDefinition<?> columnDefinition;
         final ColumnInstructions columnInstructions;
         {
-            final ColumnDefinition<?> cd = ColumnDefinition.of(columnName, type);
+            final ColumnDefinition<?> cd = ColumnDefinition.of(columnName, dhType);
             final PartitionField pf = ii.spec().isPresent()
                     ? PartitionSpecHelper.findIdentityForSchemaFieldId(ii.spec().get(), fieldId).orElse(null)
                     : null;
@@ -149,12 +153,8 @@ final class InferenceImpl extends TypeUtil.SchemaVisitor<Void> {
     }
 
     @Override
-    public Void list(Types.ListType list, Void elementResult) {
-        if (skipDepth != 0) {
-            return null;
-        }
-        unsupportedTypes.add(new Inference.UnsupportedType(ii.schema(), fieldPath));
-        return null;
+    public Void list(Types.ListType listType, Void elementResult) {
+        return processField(listType);
     }
 
     @Override

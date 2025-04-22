@@ -35,6 +35,10 @@ import io.deephaven.parquet.table.ParquetInstructions;
 import io.deephaven.parquet.table.ParquetTools;
 import io.deephaven.parquet.table.location.ParquetTableLocationKey;
 import io.deephaven.qst.type.Type;
+import io.deephaven.vector.DoubleVector;
+import io.deephaven.vector.DoubleVectorDirect;
+import io.deephaven.vector.IntVector;
+import io.deephaven.vector.IntVectorDirect;
 import org.apache.iceberg.AppendFiles;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.DataFiles;
@@ -77,12 +81,14 @@ import java.util.List;
 import java.util.stream.Collectors;
 import static io.deephaven.engine.testutil.TstUtils.assertTableEquals;
 import static io.deephaven.engine.util.TableTools.booleanCol;
+import static io.deephaven.engine.util.TableTools.byteCol;
 import static io.deephaven.engine.util.TableTools.col;
 import static io.deephaven.engine.util.TableTools.doubleCol;
 import static io.deephaven.engine.util.TableTools.floatCol;
 import static io.deephaven.engine.util.TableTools.instantCol;
 import static io.deephaven.engine.util.TableTools.intCol;
 import static io.deephaven.engine.util.TableTools.longCol;
+import static io.deephaven.engine.util.TableTools.shortCol;
 import static io.deephaven.engine.util.TableTools.stringCol;
 import static io.deephaven.iceberg.layout.IcebergBaseLayout.computeSortedColumns;
 import static io.deephaven.iceberg.util.ColumnInstructions.schemaField;
@@ -399,9 +405,11 @@ public abstract class SqliteCatalogBase {
     }
 
     @Test
-    void appendToCatalogTableWithAllDataTypesTest() {
+    void appendToCatalogTableWithAllFlatDataTypesTest() {
         final TableDefinition td = TableDefinition.of(
                 ColumnDefinition.ofBoolean("booleanCol"),
+                ColumnDefinition.ofByte("byteCol"),
+                ColumnDefinition.ofShort("shortCol"),
                 ColumnDefinition.ofDouble("doubleCol"),
                 ColumnDefinition.ofFloat("floatCol"),
                 ColumnDefinition.ofInt("intCol"),
@@ -410,11 +418,12 @@ public abstract class SqliteCatalogBase {
                 ColumnDefinition.ofTime("instantCol"),
                 ColumnDefinition.of("localDateTimeCol", Type.find(LocalDateTime.class)),
                 ColumnDefinition.of("localDateCol", Type.find(LocalDate.class)),
-                ColumnDefinition.of("localTimeCol", Type.find(LocalTime.class)),
-                ColumnDefinition.of("binaryCol", Type.byteType().arrayType()));
+                ColumnDefinition.of("localTimeCol", Type.find(LocalTime.class)));
 
         final Table source = TableTools.newTable(td,
                 booleanCol("booleanCol", true, false, null),
+                byteCol("byteCol", (byte) 0, (byte) 1, (byte) 2),
+                shortCol("shortCol", (short) 0, (short) -1, (short) 2),
                 doubleCol("doubleCol", 0.0, 1.1, 2.2),
                 floatCol("floatCol", 0.0f, 1.1f, 2.2f),
                 intCol("intCol", 3, 2, 1),
@@ -426,13 +435,10 @@ public abstract class SqliteCatalogBase {
                 new ColumnHolder<>("localDateCol", LocalDate.class, null, false, LocalDate.now(), null,
                         LocalDate.now()),
                 new ColumnHolder<>("localTimeCol", LocalTime.class, null, false, LocalTime.now(), null,
-                        LocalTime.now()),
-                new ColumnHolder<>("binaryCol", byte[].class, byte.class, false, new byte[] {42, 43}, null,
-                        new byte[] {}));
-        // todo: why is binaryCol not working here?
+                        LocalTime.now()));
 
         final Namespace myNamespace = Namespace.of("MyNamespace");
-        final TableIdentifier myTableId = TableIdentifier.of(myNamespace, "MyTableWithAllDataTypes");
+        final TableIdentifier myTableId = TableIdentifier.of(myNamespace, "MyTableWithAllFlatDataTypes");
         final Resolver resolver = catalogAdapter.createTable2(myTableId, td);
         final IcebergTableAdapter tableAdapter = catalogAdapter.loadTable(myTableId);
 
@@ -444,6 +450,57 @@ public abstract class SqliteCatalogBase {
                 .build());
         final Table fromIceberg = table(tableAdapter, resolver);
         assertTableEquals(source, fromIceberg);
+
+        final Table fromIcebergWithoutResolver = tableAdapter.table();
+        final Table expected = source.update(
+                "byteCol = (int) byteCol",
+                "shortCol = (int) shortCol");
+        assertTableEquals(expected, fromIcebergWithoutResolver);
+    }
+
+    @Test
+    void appendToCatalogTableWithAllArrayDataTypesTest() {
+        final TableDefinition td = TableDefinition.of(
+                ColumnDefinition.of("shortList", Type.shortType().arrayType()),
+                ColumnDefinition.of("intList", Type.intType().arrayType()),
+                ColumnDefinition.of("doubleList", Type.doubleType().arrayType()));
+        final Table source = TableTools.newTable(td,
+                new ColumnHolder<>("shortList", short[].class, short.class, false,
+                        new short[] {42, -1}, null, new short[] {}),
+                new ColumnHolder<>("intList", int[].class, int.class, false,
+                        new int[] {42, -1}, null, new int[] {}),
+                new ColumnHolder<>("doubleList", double[].class, double.class, false,
+                        new double[] {42.6, -1.2}, null, new double[] {}));
+
+        final Namespace myNamespace = Namespace.of("MyNamespace");
+        final TableIdentifier myTableId = TableIdentifier.of(myNamespace, "MyTableWithAllArrayDataTypes");
+        final Resolver resolver = catalogAdapter.createTable2(myTableId, td);
+        final IcebergTableAdapter tableAdapter = catalogAdapter.loadTable(myTableId);
+
+        final IcebergTableWriter tableWriter = tableAdapter.tableWriter(writerOptionsBuilder()
+                .tableDefinition(source.getDefinition())
+                .build());
+        tableWriter.append(IcebergWriteInstructions.builder()
+                .addTables(source)
+                .build());
+        final Table fromIceberg = table(tableAdapter, resolver);
+        assertTableEquals(source, fromIceberg);
+
+        final Table fromIcebergWithoutResolver = tableAdapter.table();
+        final Table expectedData = TableTools.newTable(
+                TableTools.col("shortList",
+                        new IntVectorDirect(42, -1),
+                        null,
+                        (IntVector) new IntVectorDirect()),
+                TableTools.col("intList",
+                        new IntVectorDirect(42, -1),
+                        null,
+                        (IntVector) new IntVectorDirect()),
+                TableTools.col("doubleList",
+                        new DoubleVectorDirect(42.6, -1.2),
+                        null,
+                        (DoubleVector) new DoubleVectorDirect()));
+        assertTableEquals(expectedData, fromIcebergWithoutResolver);
     }
 
     @Test

@@ -12,13 +12,10 @@ import io.deephaven.qst.type.CustomType;
 import io.deephaven.qst.type.DoubleType;
 import io.deephaven.qst.type.FloatType;
 import io.deephaven.qst.type.GenericType;
-import io.deephaven.qst.type.GenericVectorType;
 import io.deephaven.qst.type.InstantType;
 import io.deephaven.qst.type.IntType;
 import io.deephaven.qst.type.LongType;
-import io.deephaven.qst.type.NativeArrayType;
 import io.deephaven.qst.type.PrimitiveType;
-import io.deephaven.qst.type.PrimitiveVectorType;
 import io.deephaven.qst.type.ShortType;
 import io.deephaven.qst.type.StringType;
 import io.deephaven.qst.type.Type;
@@ -102,7 +99,7 @@ final class IcebergPrimitiveCompat
 
     @Override
     public Boolean visit(ByteType byteType) {
-        return false;
+        return isIntegral();
     }
 
     @Override

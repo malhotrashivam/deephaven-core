@@ -3,7 +3,13 @@
 //
 package io.deephaven.iceberg.internal;
 
+import io.deephaven.qst.type.GenericType;
 import io.deephaven.qst.type.Type;
+import io.deephaven.vector.DoubleVector;
+import io.deephaven.vector.FloatVector;
+import io.deephaven.vector.IntVector;
+import io.deephaven.vector.LongVector;
+import io.deephaven.vector.ObjectVector;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.types.Types;
 
@@ -18,8 +24,13 @@ import java.util.Optional;
 
 public final class Inference {
 
-    public static Optional<Type<?>> of(org.apache.iceberg.types.Type.PrimitiveType primitiveType) {
-        return Optional.ofNullable(ofImpl(primitiveType));
+    public static Optional<Type<?>> of(org.apache.iceberg.types.Type type) {
+        if (type.isPrimitiveType()) {
+            return Optional.ofNullable(ofImpl(type.asPrimitiveType()));
+        } else if (type.isListType()) {
+            return Optional.ofNullable(ofImpl(type.asListType()));
+        }
+        return Optional.empty();
     }
 
     private static Type<?> ofImpl(org.apache.iceberg.types.Type.PrimitiveType primitiveType) {
@@ -113,6 +124,35 @@ public final class Inference {
         // todo: should we have QST type that captures scale / precision?
         return Type.find(BigDecimal.class);
     }
+
+    private static Type<?> ofImpl(final Types.ListType listType) {
+        switch (listType.elementType().typeId()) {
+            case DOUBLE:
+                return DoubleVector.type();
+            case FLOAT:
+                return FloatVector.type();
+            case INTEGER:
+                return IntVector.type();
+            case LONG:
+                return LongVector.type();
+            case BOOLEAN:
+            case STRING:
+            case TIMESTAMP:
+            case DATE:
+            case TIME:
+            case DECIMAL:
+                return ObjectVector.type((GenericType<?>) ofImpl(listType.elementType().asPrimitiveType()));
+            case FIXED: // Fall through
+            case BINARY: // Fall through
+            case LIST: // Fall through
+            case UUID: // Fall through
+            case STRUCT: // Fall through
+            case MAP: // Fall through
+            default:
+                return null;
+        }
+    }
+
 
     public static abstract class Exception extends java.lang.Exception {
         public Exception() {}
