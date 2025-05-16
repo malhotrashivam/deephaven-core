@@ -8,24 +8,21 @@ import org.apache.iceberg.io.FileIO;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.Optional;
-
 public abstract class FileIOAdapterBase implements FileIOAdapter {
 
     @Override
-    public final Optional<SeekableChannelsProvider> createProvider(
+    public final SeekableChannelsProvider createProvider(
             @NotNull final String uriScheme,
             @NotNull final FileIO io,
             @Nullable final Object object) {
-        if (!isCompatible(uriScheme, io, object)) {
-            return Optional.empty();
+        if (!isCompatible(uriScheme, io)) {
+            throw new IllegalArgumentException(
+                    "Arguments not compatible, provided uri scheme " + uriScheme +
+                            ", io " + io.getClass().getName() + ", special instructions " + object);
         }
-        return Optional.ofNullable(createProviderImpl(uriScheme, io, object));
+        return createProviderImpl(uriScheme, io, object);
     }
 
-    /**
-     * Create a {@link SeekableChannelsProvider} for the given URI scheme, file IO and config object.
-     */
     protected abstract SeekableChannelsProvider createProviderImpl(
             @NotNull final String uriScheme,
             @NotNull final FileIO io,

@@ -16,6 +16,7 @@ import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
 import software.amazon.awssdk.profiles.ProfileFile;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.internal.crt.S3CrtAsyncClient;
 
 import java.net.URI;
 import java.nio.file.Path;
@@ -369,6 +370,14 @@ public abstract class S3Instructions implements LogOutputAppendable {
             throw new IllegalArgumentException(
                     "numConcurrentWriteParts(=" + numConcurrentWriteParts() + ") must be <= " +
                             "maxConcurrentRequests(=" + maxConcurrentRequests() + ")");
+        }
+    }
+
+    @Check
+    final void checkS3AsyncClient() {
+        if (s3AsyncClient().isPresent() && s3AsyncClient().get() instanceof S3CrtAsyncClient) {
+            // TODO (DH-19253): Experiment with and add support for S3CrtAsyncClient
+            throw new IllegalArgumentException("S3CrtAsyncClient is not supported. Use S3AsyncClient instead.");
         }
     }
 

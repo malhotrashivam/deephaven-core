@@ -48,7 +48,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 
 /**
  * This class manages an Iceberg {@link org.apache.iceberg.Table table} and provides methods to interact with it.
@@ -62,8 +61,6 @@ public final class IcebergTableAdapter {
             ColumnDefinition.fromGenericType("Summary", Map.class),
             ColumnDefinition.fromGenericType("SnapshotObject", Snapshot.class));
 
-    private static final Set<String> S3_SCHEMES = Set.of("s3", "s3a", "s3n");
-
     private final Catalog catalog;
     private final org.apache.iceberg.Table table;
     private final TableIdentifier tableIdentifier;
@@ -71,6 +68,7 @@ public final class IcebergTableAdapter {
     private final URI locationUri;
     private final Resolver resolver;
     private final NameMapping nameMapping;
+    private final FileIOAdapter fileIOAdapter;
 
     public IcebergTableAdapter(
             final Catalog catalog,
@@ -86,6 +84,7 @@ public final class IcebergTableAdapter {
         this.locationUri = IcebergUtils.locationUri(table);
         this.resolver = Objects.requireNonNull(resolver);
         this.nameMapping = Objects.requireNonNull(nameMapping);
+        this.fileIOAdapter = FileIOAdapter.fromServiceLoader(locationUri.getScheme(), table.io());
     }
 
     /**
@@ -500,6 +499,6 @@ public final class IcebergTableAdapter {
     }
 
     SeekableChannelsProvider seekableChannelsProvider(final Object specialInstructions) {
-        return FileIOAdapter.fromServiceLoader(locationUri.getScheme(), table.io(), specialInstructions);
+        return fileIOAdapter.createProvider(locationUri.getScheme(), table.io(), specialInstructions);
     }
 }

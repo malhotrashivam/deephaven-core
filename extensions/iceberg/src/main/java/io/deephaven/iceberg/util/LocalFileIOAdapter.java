@@ -10,6 +10,7 @@ import io.deephaven.util.channel.SeekableChannelsProvider;
 import io.deephaven.util.channel.SeekableChannelsProviderLoader;
 import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.io.FileIO;
+import org.apache.iceberg.io.ResolvingFileIO;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -22,10 +23,11 @@ public final class LocalFileIOAdapter extends FileIOAdapterBase {
     @Override
     public boolean isCompatible(
             @NotNull final String uriScheme,
-            @NotNull final FileIO io,
-            @Nullable final Object specialInstructions) {
-        return FileUtils.FILE_URI_SCHEME.equals(uriScheme) &&
-                (io instanceof HadoopFileIO || io instanceof RelativeFileIO);
+            @NotNull final FileIO io) {
+        final boolean compatibleScheme = FileUtils.FILE_URI_SCHEME.equals(uriScheme);
+        final boolean compatibleIO =
+                io instanceof HadoopFileIO || io instanceof RelativeFileIO || io instanceof ResolvingFileIO;
+        return compatibleScheme && compatibleIO;
     }
 
     @Override
@@ -33,7 +35,7 @@ public final class LocalFileIOAdapter extends FileIOAdapterBase {
             @NotNull final String uriScheme,
             @NotNull final FileIO io,
             @Nullable final Object specialInstructions) {
-        if (!isCompatible(uriScheme, io, specialInstructions)) {
+        if (!isCompatible(uriScheme, io)) {
             throw new IllegalArgumentException("Arguments not compatible, provided uri scheme " + uriScheme +
                     ", io " + io.getClass().getName() + ", special instructions " + specialInstructions);
         }

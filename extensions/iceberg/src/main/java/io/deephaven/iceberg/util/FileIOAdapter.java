@@ -8,7 +8,6 @@ import org.apache.iceberg.io.FileIO;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.Optional;
 import java.util.ServiceLoader;
 
 /**
@@ -16,6 +15,25 @@ import java.util.ServiceLoader;
  * given {@link FileIO} implementation.
  */
 public interface FileIOAdapter {
+
+    /**
+     * Create a {@link FileIOAdapter} that is compatible with the given URI scheme and {@link FileIO} implementation.
+     */
+    static FileIOAdapter fromServiceLoader(
+            @NotNull final String uriScheme,
+            @NotNull final FileIO io) {
+        for (final FileIOAdapter adapter : ServiceLoader.load(FileIOAdapter.class)) {
+            if (adapter.isCompatible(uriScheme, io)) {
+                return adapter;
+            }
+        }
+        throw new UnsupportedOperationException("No adapter found for FileIO " + io.getClass());
+    }
+
+    /**
+     * Check if this adapter is compatible with the given URI scheme and file IO.
+     */
+    boolean isCompatible(@NotNull String uriScheme, @NotNull final FileIO io);
 
     /**
      * Create a new {@link SeekableChannelsProvider} compatible for reading from and writing to the given URI scheme
@@ -26,31 +44,7 @@ public interface FileIOAdapter {
      * @param io The {@link FileIO} implementation to use.
      * @param specialInstructions An optional object to pass special instructions to the provider.
      */
-    static SeekableChannelsProvider fromServiceLoader(
-            @NotNull final String uriScheme,
-            @NotNull final FileIO io,
-            @Nullable final Object specialInstructions) {
-        for (final FileIOAdapter adapter : ServiceLoader.load(FileIOAdapter.class)) {
-            if (adapter.isCompatible(uriScheme, io, specialInstructions)) {
-                final SeekableChannelsProvider provider =
-                        adapter.createProvider(uriScheme, io, specialInstructions).orElse(null);
-                if (provider != null) {
-                    return provider;
-                }
-            }
-        }
-        throw new UnsupportedOperationException("No provider found for FileIO " + io.getClass());
-    }
-
-    /**
-     * Check if this adapter is compatible with the given URI scheme, file IO and config object.
-     */
-    boolean isCompatible(@NotNull String uriScheme, @NotNull final FileIO io, @Nullable Object config);
-
-    /**
-     * Create a {@link SeekableChannelsProvider} for the given URI scheme, file IO and config object.
-     */
-    Optional<SeekableChannelsProvider> createProvider(
+    SeekableChannelsProvider createProvider(
             @NotNull String uriScheme,
             @NotNull FileIO io,
             @Nullable Object specialInstructions);
