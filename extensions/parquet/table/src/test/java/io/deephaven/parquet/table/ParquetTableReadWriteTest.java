@@ -5928,4 +5928,14 @@ public final class ParquetTableReadWriteTest {
         // TstUtils.assertTableEquals(expected, readSingleTable(source, instructions, expected.getDefinition()));
         return singleTable;
     }
+
+
+    @Test
+    public void testWritingEmptyRowGroup() {
+        final Table table = TableTools.newTable(stringCol("animal", "Dog", "Cat", "Horse"));
+        final String dest = "/Users/shivammalhotra/Documents/testWritingEmptyRowGroup.parquet";
+        ParquetTools.writeTable(table, dest);
+        final Table fromDisk = ParquetTools.readTable(dest);
+        assertTableEquals(merge(table, table.tail(1)), fromDisk);
+    }
 }

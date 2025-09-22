@@ -90,7 +90,8 @@ final class ColumnWriterImpl implements ColumnWriter {
                         getWidthFromMaxInt(column.getMaxRepetitionLevel()), MIN_SLAB_SIZE, targetPageSize, allocator);
         this.owner = owner;
         offsetIndexBuilder = OffsetIndexBuilder.getBuilder();
-        statistics = Statistics.createStats(column.getPrimitiveType());
+        statistics = NullStatistics.INSTANCE; // Statistics.createStats(column.getPrimitiveType());
+        // ^Useful for testing pushdown predicates
     }
 
     @Override
@@ -448,7 +449,8 @@ final class ColumnWriterImpl implements ColumnWriter {
 
     @Override
     public void resetStats() {
-        statistics = Statistics.createStats(column.getPrimitiveType());
+        statistics = NullStatistics.INSTANCE; // Statistics.createStats(column.getPrimitiveType());
+        // ^Useful for testing pushdown predicates
     }
 
     @Override

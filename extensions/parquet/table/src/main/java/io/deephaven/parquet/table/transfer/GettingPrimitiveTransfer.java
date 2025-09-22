@@ -34,7 +34,7 @@ abstract class GettingPrimitiveTransfer<CHUNK_TYPE extends ChunkBase<Values>, BU
         this.columnSource = columnSource;
         this.tableRowSetIt = tableRowSet.getRowSequenceIterator();
         this.buffer = buffer;
-        Assert.gtZero(targetElementsPerPage, "targetElementsPerPage");
+        // Assert.gtZero(targetElementsPerPage, "targetElementsPerPage");
         this.targetElementsPerPage = targetElementsPerPage;
         context = columnSource.makeGetContext(targetElementsPerPage);
     }

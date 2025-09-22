@@ -227,7 +227,10 @@ public class ParquetTableWriter {
                 // Given the transformation, do not use the original table's "definition" for writing
                 final Iterator<Table> it = RowGroupTableIteratorVisitor.of(writeInstructions.getRowGroupInfo(), t);
                 while (it.hasNext()) {
-                    write(it.next(), writeInstructions, parquetFileWriter, computedCache);
+                    final Table toWrite = it.next();
+                    write(toWrite, writeInstructions, parquetFileWriter, computedCache);
+                    write(toWrite.head(0), writeInstructions, parquetFileWriter, computedCache);
+                    write(toWrite.tail(1), writeInstructions, parquetFileWriter, computedCache);
                 }
                 parquetFileWriter.close();
                 numBytesWritten = parquetFileWriter.bytesWritten();
@@ -255,19 +258,19 @@ public class ParquetTableWriter {
         final TrackingRowSet tableRowSet = table.getRowSet();
         final Map<String, ? extends ColumnSource<?>> columnSourceMap = table.getColumnSourceMap();
         final long nRows = table.size();
-        if (nRows > 0) {
-            final RowGroupWriter rowGroupWriter = parquetFileWriter.addRowGroup(nRows);
-            for (final Map.Entry<String, ? extends ColumnSource<?>> nameToSource : columnSourceMap.entrySet()) {
-                final String columnName = nameToSource.getKey();
-                final ColumnSource<?> columnSource = nameToSource.getValue();
-                try {
-                    writeColumnSource(tableRowSet, writeInstructions, rowGroupWriter, computedCache, columnName,
-                            columnSource);
-                } catch (IllegalAccessException e) {
-                    throw new RuntimeException("Failed to write column " + columnName, e);
-                }
+        // if (nRows > 0) {
+        final RowGroupWriter rowGroupWriter = parquetFileWriter.addRowGroup(nRows);
+        for (final Map.Entry<String, ? extends ColumnSource<?>> nameToSource : columnSourceMap.entrySet()) {
+            final String columnName = nameToSource.getKey();
+            final ColumnSource<?> columnSource = nameToSource.getValue();
+            try {
+                writeColumnSource(tableRowSet, writeInstructions, rowGroupWriter, computedCache, columnName,
+                        columnSource);
+            } catch (IllegalAccessException e) {
+                throw new RuntimeException("Failed to write column " + columnName, e);
             }
         }
+        // }
     }
 
     /**
@@ -522,6 +525,9 @@ public class ParquetTableWriter {
             @NotNull final Map<String, Map<ParquetCacheTags, Object>> computedCache,
             @NotNull final String columnName,
             @NotNull final ColumnSource<DATA_TYPE> columnSource) throws IOException {
+        if (tableRowSet.isEmpty()) {
+            return;
+        }
         try (final TransferObject<?> transferObject = TransferObject.create(
                 tableRowSet, writeInstructions, computedCache, columnName, columnSource)) {
             final Statistics<?> statistics = columnWriter.getStats();
