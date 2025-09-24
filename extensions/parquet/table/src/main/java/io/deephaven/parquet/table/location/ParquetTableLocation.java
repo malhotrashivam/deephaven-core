@@ -956,25 +956,29 @@ public class ParquetTableLocation extends AbstractTableLocation {
                     return;
                 }
 
-                // Run the filter on the dictionary to find which dictionary entries satisfy the filter.
-                final LongChunk<OrderedRowKeys> keyMatch = chunkFilter.filter(dictionaryChunk, keyCandidates);
-                if (keyMatch.size() == 0) {
-                    // We have no matches, we can't eliminate anything, so keep all the rows as "maybe" rows.
-                    maybeBuilder.appendRowSequence(rs);
-                    maybeCount.add(rs.size());
-                    return;
-                }
-
-                // Build an array of matching dictionary key IDs.
+                // Run the filter on the dictionary to find which dictionary entries satisfy the filter and build an
+                // array of matching dictionary key IDs.
                 final long[] keyMatchArray;
-                if (ctx.filterIncludesNulls()) {
-                    // Include one extra slot for NULL_LONG as a matching key if the filter includes nulls.
-                    keyMatchArray = new long[keyMatch.size() + 1];
-                    keyMatchArray[keyMatch.size()] = NULL_LONG;
-                } else {
-                    keyMatchArray = new long[keyMatch.size()];
+                try (final WritableLongChunk<OrderedRowKeys> keyCandidatesForChunk =
+                        keyCandidates.slice(0, dictionaryChunk.size())) {
+                    final LongChunk<OrderedRowKeys> keyMatch =
+                            chunkFilter.filter(dictionaryChunk, keyCandidatesForChunk);
+                    if (keyMatch.size() == 0) {
+                        // We have no matches, we can't eliminate anything, so keep all the rows as "maybe" rows.
+                        maybeBuilder.appendRowSequence(rs);
+                        maybeCount.add(rs.size());
+                        return;
+                    }
+
+                    if (ctx.filterIncludesNulls()) {
+                        // Include one extra slot for NULL_LONG as a matching key if the filter includes nulls.
+                        keyMatchArray = new long[keyMatch.size() + 1];
+                        keyMatchArray[keyMatch.size()] = NULL_LONG;
+                    } else {
+                        keyMatchArray = new long[keyMatch.size()];
+                    }
+                    keyMatch.copyToTypedArray(0, keyMatchArray, 0, keyMatch.size());
                 }
-                keyMatch.copyToTypedArray(0, keyMatchArray, 0, keyMatch.size());
 
                 // Make a MatchFilter with the matching dictionary key IDs. This will accept any encoded value whose
                 // dictionary index is in keyMatchArray

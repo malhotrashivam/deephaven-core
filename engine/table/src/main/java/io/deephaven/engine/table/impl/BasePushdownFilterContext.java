@@ -129,6 +129,13 @@ public class BasePushdownFilterContext implements PushdownFilterContext {
                         try (final RowSet result = filter.filter(rowSet, rowSet, nullTestDummyTable, false)) {
                             filterIncludesNulls = !result.isEmpty();
                         }
+                        // TODO Think about this
+                        // catch (final Exception e) {
+                        // // If the filter throws an exception when applied to `null`, we assume it does not include
+                        // // nulls. For example, a filter like `x.beginsWith("A")` will throw an NPE if `x` is
+                        // // `null`.
+                        // filterIncludesNulls = false;
+                        // }
                     }
                 }
             }
@@ -173,7 +180,6 @@ public class BasePushdownFilterContext implements PushdownFilterContext {
             // Create a dummy table with no rows and single column of the correct type and name as the filter. This is
             // used to extract a chunk filter kernel from the conditional filter and bind it to the correct name and
             // type without capturing references to the actual table or its column sources.
-            // That is why it can be reused across threads.
             if (conditionalFilterInitTable == null) {
                 synchronized (this) {
                     if (conditionalFilterInitTable == null) {

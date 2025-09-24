@@ -5,12 +5,14 @@ package io.deephaven.parquet.table;
 
 import io.deephaven.api.filter.Filter;
 import io.deephaven.base.FileUtils;
+import io.deephaven.configuration.Configuration;
 import io.deephaven.engine.context.ExecutionContext;
 import io.deephaven.engine.context.QueryScope;
 import io.deephaven.engine.table.*;
 import io.deephaven.engine.table.impl.AbstractColumnSource;
 import io.deephaven.engine.table.impl.PushdownFilterContext;
 import io.deephaven.engine.table.impl.indexer.DataIndexer;
+import io.deephaven.engine.table.impl.select.ConditionFilter;
 import io.deephaven.engine.table.impl.select.DoubleRangeFilter;
 import io.deephaven.engine.table.impl.select.FloatRangeFilter;
 import io.deephaven.engine.table.impl.select.MatchFilter;
@@ -49,7 +51,6 @@ import static io.deephaven.engine.testutil.TstUtils.assertTableEquals;
 import static io.deephaven.engine.util.TableTools.doubleCol;
 import static io.deephaven.engine.util.TableTools.floatCol;
 import static io.deephaven.engine.util.TableTools.intCol;
-import static io.deephaven.engine.util.TableTools.merge;
 import static io.deephaven.engine.util.TableTools.newTable;
 import static io.deephaven.engine.util.TableTools.stringCol;
 import static io.deephaven.parquet.table.ParquetTools.readTable;
@@ -66,6 +67,11 @@ public final class ParquetTableFilterTest {
     private static final ParquetInstructions EMPTY = ParquetInstructions.EMPTY;
 
     private static File rootFile;
+
+    static {
+        // Enable stateless filters to enable pushdown-based filtering for Condition filters
+        Configuration.getInstance().setProperty("QueryTable.statelessFiltersByDefault", "true");
+    }
 
     @Rule
     public final EngineCleanup framework = new EngineCleanup();
@@ -149,6 +155,16 @@ public final class ParquetTableFilterTest {
 
     private static void verifyResultsAllowEmpty(Table filteredDiskTable, Table filteredMemTable) {
         assertTableEquals(filteredDiskTable, filteredMemTable);
+    }
+
+    private static void filterAndVerifyThrowsSame(Table diskTable, Table memTable, String... filters) {
+        final Class<? extends Throwable> memEx =
+                Assert.assertThrows("memTable should throw", Throwable.class,
+                        () -> memTable.where(filters).coalesce()).getClass();
+        final Class<? extends Throwable> diskEx =
+                Assert.assertThrows("diskTable should throw", memEx,
+                        () -> diskTable.where(filters).coalesce()).getClass();
+        Assert.assertSame("Exception types not matching", memEx, diskEx);
     }
 
     @Test
@@ -1573,23 +1589,93 @@ public final class ParquetTableFilterTest {
                 .build();
 
         // Write three tables to the same directory with multiple row groups
-        writeTable(source1, destDir.getAbsolutePath() + "/part1.parquet", writeInstructions);
-        writeTable(source2, destDir.getAbsolutePath() + "/part2.parquet", writeInstructions);
-        writeTable(source3, destDir.getAbsolutePath() + "/part3.parquet", writeInstructions);
+        writeTable(source1, new File(destDir, "part1.parquet").getAbsolutePath(), writeInstructions);
+        writeTable(source2, new File(destDir, "part2.parquet").getAbsolutePath(), writeInstructions);
+        writeTable(source3, new File(destDir, "part3.parquet").getAbsolutePath(), writeInstructions);
 
         // Read back as a flat partitioned table
-        final Table fromDisk = ParquetTools.readTable(destDir.getAbsolutePath(),
+        final Table diskTable = ParquetTools.readTable(destDir.getAbsolutePath(),
                 EMPTY.withLayout(ParquetInstructions.ParquetFileLayout.FLAT_PARTITIONED));
 
         // Filter for values that are only in one of the source tables
-        final Table memTable = fromDisk.select();
-        filterAndVerifyResults(fromDisk, memTable, "animal == `Dog`");
-        filterAndVerifyResults(fromDisk, memTable, "animal == `Horse`");
-        filterAndVerifyResults(fromDisk, memTable, "animal == `Zebra`");
-        filterAndVerifyResults(fromDisk, memTable, "animal == `Cat`");
-        filterAndVerifyResults(fromDisk, memTable, "animal == `Whale`");
-        filterAndVerifyResults(fromDisk, memTable, "animal == `Ant`");
-        filterAndVerifyResults(fromDisk, memTable, "animal == `Elephant` || animal == `Dog`");
-        filterAndVerifyResultsAllowEmpty(fromDisk, memTable, "animal == `Parrot`");
+        final Table memTable = diskTable.select();
+        filterAndVerifyResults(diskTable, memTable, "animal == `Dog`");
+        filterAndVerifyResults(diskTable, memTable, "animal == `Horse`");
+        filterAndVerifyResults(diskTable, memTable, "animal == `Zebra`");
+        filterAndVerifyResults(diskTable, memTable, "animal == `Cat`");
+        filterAndVerifyResults(diskTable, memTable, "animal == `Whale`");
+        filterAndVerifyResults(diskTable, memTable, "animal == `Ant`");
+        filterAndVerifyResults(diskTable, memTable, "animal == `Elephant` || animal == `Dog`");
+        filterAndVerifyResultsAllowEmpty(diskTable, memTable, "animal == `Parrot`");
+    }
+
+    @Test
+    public void dictionaryConditionalFilterTest() {
+        final Table source = TableTools.newTable(
+                stringCol("animal", "Centipede", "Lion", "Elephant", "Cat", "Whale"));
+
+        // Disable writing row group statistics to verify filtering using dictionary
+        final ParquetInstructions writeInstructions = new ParquetInstructions.Builder()
+                .setRowGroupInfo(RowGroupInfo.maxRows(2))
+                .setWriteRowGroupStatistics(false)
+                .build();
+
+        final String destPath = Path.of(rootFile.getPath(), "dictionaryConditionalFilter") + ".parquet";
+        writeTable(source, destPath, writeInstructions);
+
+        // Read back and test filtering
+        final Table diskTable = ParquetTools.readTable(destPath);
+        final Table memTable = diskTable.select();
+
+        filterAndVerifyResults(diskTable, memTable, ConditionFilter.createConditionFilter("animal = `Centipede`"));
+        filterAndVerifyResults(diskTable, memTable, ConditionFilter.createConditionFilter("animal != `Centipede`"));
+        filterAndVerifyResults(diskTable, memTable, ConditionFilter.createConditionFilter("animal = `Lion`"));
+        filterAndVerifyResults(diskTable, memTable, ConditionFilter.createConditionFilter("animal = `Cat`"));
+
+        filterAndVerifyResults(diskTable, memTable, ConditionFilter.createConditionFilter("animal = `Elephant`"));
+        filterAndVerifyResults(diskTable, memTable, ConditionFilter.createConditionFilter("animal != `Elephant`"));
+        filterAndVerifyResults(diskTable, memTable, ConditionFilter.createConditionFilter("animal < `Elephant`"));
+        filterAndVerifyResults(diskTable, memTable, ConditionFilter.createConditionFilter("animal <= `Elephant`"));
+        filterAndVerifyResults(diskTable, memTable, ConditionFilter.createConditionFilter("animal > `Elephant`"));
+        filterAndVerifyResults(diskTable, memTable, ConditionFilter.createConditionFilter("animal >= `Elephant`"));
+
+        filterAndVerifyResults(diskTable, memTable, ConditionFilter.createConditionFilter("animal = `Whale`"));
+        filterAndVerifyResults(diskTable, memTable, ConditionFilter.createConditionFilter("animal != `Whale`"));
+        filterAndVerifyResults(diskTable, memTable, ConditionFilter.createConditionFilter("animal <= `Whale`"));
+        filterAndVerifyResultsAllowEmpty(diskTable, memTable,
+                ConditionFilter.createConditionFilter("animal > `Whale`"));
+
+        filterAndVerifyResultsAllowEmpty(diskTable, memTable, ConditionFilter.createConditionFilter("animal = `Dog`"));
+        filterAndVerifyResults(diskTable, memTable, ConditionFilter.createConditionFilter("animal < `Dog`"));
+        filterAndVerifyResults(diskTable, memTable, ConditionFilter.createConditionFilter("animal > `Dog`"));
+        filterAndVerifyResults(diskTable, memTable, ConditionFilter.createConditionFilter("animal != `Dog`"));
+
+        filterAndVerifyResultsAllowEmpty(diskTable, memTable, ConditionFilter.createConditionFilter("animal == null"));
+        filterAndVerifyResultsAllowEmpty(diskTable, memTable, ConditionFilter.createConditionFilter("animal != null"));
+
+        filterAndVerifyResults(diskTable, memTable, ConditionFilter.createConditionFilter("animal.startsWith(`C`)"));
+    }
+
+    @Test
+    public void dictionaryNullEntryFilterTest() {
+        final Table source = TableTools.newTable(
+                stringCol("animal", "Centipede", null, "Elephant", "Cat"));
+
+        // Disable writing row group statistics to verify filtering using dictionary
+        final ParquetInstructions writeInstructions = new ParquetInstructions.Builder()
+                .setRowGroupInfo(RowGroupInfo.maxRows(2))
+                .setWriteRowGroupStatistics(false)
+                .build();
+
+        final String destPath = Path.of(rootFile.getPath(), "dictionaryConditionalFilter") + ".parquet";
+        writeTable(source, destPath, writeInstructions);
+
+        // Read back and test filtering
+        final Table diskTable = ParquetTools.readTable(destPath);
+        final Table memTable = diskTable.select();
+
+        filterAndVerifyThrowsSame(diskTable, memTable, "animal.startsWith(`C`)");
+        filterAndVerifyResults(diskTable, memTable, ConditionFilter.createConditionFilter("animal = null"));
+        filterAndVerifyResults(diskTable, memTable, ConditionFilter.createConditionFilter("animal != null"));
     }
 }

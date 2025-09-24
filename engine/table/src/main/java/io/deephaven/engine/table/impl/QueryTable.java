@@ -310,10 +310,12 @@ public class QueryTable extends BaseTable<QueryTable> {
 
     /**
      * If set to true, then the default behavior of condition filters is to be stateless. Stateless filters are allowed
-     * to be processed in parallel by the engine.
+     * to be processed in parallel by the engine. Also, enabling this setting allows the engine to push down filters to
+     * the data source when possible, like in case of parquet files.
      */
     public static boolean STATELESS_FILTERS_BY_DEFAULT =
-            Configuration.getInstance().getBooleanWithDefault("QueryTable.statelessFiltersByDefault", false);
+            Configuration.getInstance().getBooleanWithDefault("QueryTable.statelessFiltersByDefault", true);
+    // TODO Without this, we will not use pushdown for condition filters.
 
     private static final AtomicReferenceFieldUpdater<QueryTable, ModifiedColumnSet> MODIFIED_COLUMN_SET_UPDATER =
             AtomicReferenceFieldUpdater.newUpdater(QueryTable.class, ModifiedColumnSet.class, "modifiedColumnSet");
